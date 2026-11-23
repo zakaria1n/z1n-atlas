@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { GitHubImport } from "@/features/repository-import/github-import";
 import { Header } from "@/components/layout/header";
 
 export default function ImportPage() {
@@ -9,18 +10,11 @@ export default function ImportPage() {
         <p className="eyebrow">Start exploring</p>
         <h1>Open a project.</h1>
         <p className="intro">
-          Choose how you would like to bring a project into your atlas. Import
-          is not available yet.
+          Read a public repository or choose a local folder when that option is
+          available.
         </p>
         <div className="options">
-          <section className="option">
-            <div className="option-icon" aria-hidden="true">
-              ↗
-            </div>
-            <h2>Public GitHub repository</h2>
-            <p>Explore a public repository by its GitHub URL.</p>
-            <button disabled>GitHub import coming soon</button>
-          </section>
+          <GitHubImport />
           <section className="option">
             <div className="option-icon mint" aria-hidden="true">
               ⌑

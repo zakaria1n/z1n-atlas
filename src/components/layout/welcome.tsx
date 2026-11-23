@@ -20,7 +20,8 @@ export function Welcome() {
             Explore a project <span aria-hidden="true">→</span>
           </Link>
           <p className="availability">
-            Repository import and AI explanations are in development.
+            GitHub import is available; code browsing and AI explanations are in
+            development.
           </p>
         </div>
         <div className="hero-art">

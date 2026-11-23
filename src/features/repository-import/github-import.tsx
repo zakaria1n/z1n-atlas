@@ -1,0 +1,108 @@
+"use client";
+import { useState, type FormEvent } from "react";
+import { parseGitHubRepository } from "@/core/repository/github-url";
+
+type Summary = {
+  repository: { url: string };
+  commit: string;
+  files: { path: string }[];
+  skipped: number;
+  truncated: boolean;
+};
+export function GitHubImport() {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [summary, setSummary] = useState<Summary | null>(null);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSummary(null);
+    if (!parseGitHubRepository(url)) {
+      setError(
+        "Enter a public GitHub repository URL, such as https://github.com/owner/repository.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch("/api/repositories/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(
+          typeof data.error === "string"
+            ? data.error
+            : "Import failed. Try again.",
+        );
+        return;
+      }
+      setSummary(data as Summary);
+    } catch {
+      setError(
+        "Could not reach the server. Check your connection and try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="option">
+      <div className="option-icon" aria-hidden="true">
+        ↗
+      </div>
+      <h2>Public GitHub repository</h2>
+      <p>
+        Read eligible source files from a public repository default branch. Up
+        to 25 files, 100 KB per file and 1 MB total; sensitive paths and
+        generated files are excluded.
+      </p>
+      <form onSubmit={submit}>
+        <label htmlFor="github-url">GitHub repository URL</label>
+        <input
+          id="github-url"
+          type="url"
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+          placeholder="https://github.com/owner/repository"
+          required
+          disabled={busy}
+          aria-describedby={error ? "import-error" : undefined}
+        />
+        <button type="submit" className="import-button" disabled={busy}>
+          {busy ? "Reading repository…" : "Import repository"}
+        </button>
+      </form>
+      <p aria-live="polite">
+        {busy &&
+          "Reading repository metadata and eligible files from GitHub. This may take a moment."}
+      </p>
+      {error && (
+        <p id="import-error" role="alert" className="error">
+          {error}
+        </p>
+      )}
+      {summary && (
+        <div className="result" role="status">
+          <h3>Repository read</h3>
+          <p>{summary.repository.url}</p>
+          <p>
+            {summary.files.length} files read · {summary.skipped} files skipped
+          </p>
+          <p>
+            Commit: <code>{summary.commit.slice(0, 12)}</code>
+          </p>
+          {summary.truncated && (
+            <p>
+              GitHub returned a truncated file tree; coverage is incomplete.
+            </p>
+          )}
+          <p>The summary is temporary; file browsing is not available yet.</p>
+        </div>
+      )}
+    </section>
+  );
+}

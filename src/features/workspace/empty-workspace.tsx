@@ -24,8 +24,8 @@ export function EmptyWorkspace() {
         </div>
         <h1>Your atlas starts here.</h1>
         <p>
-          Open a project to explore its files and connections. Import is not
-          available yet.
+          The workspace is not connected to imported projects yet. File browsing
+          and graph exploration are in development.
         </p>
         <Link href="/import" className="button primary">
           Explore import options →
@@ -55,9 +55,7 @@ export function EmptyWorkspace() {
           </button>
         </form>
         <h2 id="files-title">Files</h2>
-        <p>
-          No project is open. Files will appear here after import is available.
-        </p>
+        <p>No project is open. File browsing is in development.</p>
         <Link href="/import" className="text-link">
           Import options →
         </Link>
@@ -73,10 +71,7 @@ export function EmptyWorkspace() {
           </button>
         </form>
         <h2 id="inspector-title">Code inspector</h2>
-        <p>
-          Open a project and select a file to inspect its source when import is
-          available.
-        </p>
+        <p>Source inspection is in development.</p>
       </dialog>
       <dialog
         ref={assistant}

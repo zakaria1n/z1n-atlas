@@ -58,6 +58,29 @@ describe("GitHub importer", () => {
     expect(snapshot.commit).toBe(sha);
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
+  it("caps a large repository and reports omitted files", async () => {
+    const entries = Array.from({ length: 30 }, (_, i) => ({
+      type: "blob",
+      mode: "100644",
+      path: `src/file${i}.ts`,
+      size: 3,
+      sha,
+    }));
+    const fetcher = responses([
+      { private: false, default_branch: "main" },
+      { sha },
+      { truncated: false, tree: entries },
+      ...Array.from({ length: 25 }, () => ({
+        encoding: "base64",
+        size: 3,
+        content: "YWJj",
+      })),
+    ]);
+    const snapshot = await importGitHubRepository(repo, fetcher);
+    expect(snapshot.files).toHaveLength(25);
+    expect(snapshot.skipped).toBe(5);
+    expect(fetcher).toHaveBeenCalledTimes(28);
+  });
   it("surfaces rate limits without returning upstream content", async () => {
     const fetcher = vi.fn(
       async () =>

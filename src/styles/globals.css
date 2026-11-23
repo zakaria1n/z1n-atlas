@@ -393,3 +393,41 @@ button:disabled {
     font-size: 0.85rem;
   }
 }
+
+.option label {
+  display: block;
+  margin-top: 1rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.option input {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.8rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: var(--ink);
+}
+.option .import-button {
+  background: var(--ink);
+  color: #fff;
+  border: 0;
+  font-weight: 700;
+}
+.option .import-button:disabled {
+  background: #e2e8f0;
+  color: #475569;
+}
+.option .error {
+  color: #9b3022;
+  font-weight: 600;
+}
+.result {
+  border-top: 1px solid var(--border);
+  margin-top: 1rem;
+  overflow-wrap: anywhere;
+}
+.result h3 {
+  font-weight: 700;
+}

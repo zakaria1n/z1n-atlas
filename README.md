@@ -2,9 +2,9 @@
 
 **Visualize. Explore. Understand.**
 
-Z1N Atlas is an application in development for exploring source code through a visual map and evidence-backed explanations. The current application provides responsive welcome, import, settings, and empty workspace screens. Import and AI controls are not yet available.
+Z1N Atlas is an application in development for exploring source code through a visual map and evidence-backed explanations. The application provides responsive welcome, import, settings, and empty workspace screens. It can read a bounded selection of source files from a public GitHub repository and display an import summary.
 
-Repository import, code analysis, graph visualization, AI explanations, and feature journeys are **planned** and are not available yet. No repository content is processed by the current application.
+Local folder import, file browsing, code analysis, graph visualization, AI explanations, and feature journeys are **planned** and are not available yet. Imported source is returned to the browser in memory; the workspace does not yet use it.
 
 ## Getting started
 
@@ -32,3 +32,5 @@ Use `pnpm format` to format project files. The app uses Next.js App Router, Reac
 ## Principles
 
 The intended experience is read-only: imported projects should never be modified or executed. Provider key handling and source-sharing details will be documented when those capabilities are implemented.
+
+GitHub import reads only public default branches and enforces a maximum of 25 files, 100 KB per file, and 1 MB of source. It excludes common secret paths, generated directories, and unsupported file types; these filters cannot guarantee that source files contain no secrets. GitHub API rate limits may prevent imports. The per-process request limit is not a distributed rate limiter; production deployments need appropriate shared rate limiting.
