@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "pnpm build:analyzer && next dev",
+    "build": "pnpm build:analyzer && next build",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "pnpm build:analyzer && vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "build:analyzer": "tsc -p tsconfig.analysis.json"
   },
   "dependencies": {
     "next": "16.4.6",

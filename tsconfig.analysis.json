@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "rootDir": "src",
+    "outDir": ".analysis-build",
+    "noEmit": false,
+    "incremental": false,
+    "isolatedModules": false,
+    "plugins": []
+  },
+  "include": ["src/server/analyzer/worker.ts"]
+}
