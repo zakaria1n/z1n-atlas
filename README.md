@@ -2,7 +2,7 @@
 
 **Visualize. Explore. Understand.**
 
-Z1N Atlas is an application in development for exploring source code through a visual map and evidence-backed explanations. The current application provides a responsive welcome screen and development foundation.
+Z1N Atlas is an application in development for exploring source code through a visual map and evidence-backed explanations. The current application provides responsive welcome, import, settings, and empty workspace screens. Import and AI controls are not yet available.
 
 Repository import, code analysis, graph visualization, AI explanations, and feature journeys are **planned** and are not available yet. No repository content is processed by the current application.
 

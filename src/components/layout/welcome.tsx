@@ -1,38 +1,41 @@
 import Image from "next/image";
+import Link from "next/link";
+import { Header } from "./header";
 
 export function Welcome() {
   return (
     <div className="shell">
-      <header className="header">
-        <Image
-          src="/assets/logo-horizontal.svg"
-          alt="Z1N Atlas"
-          width={180}
-          height={45}
-          priority
-        />
-        <span className="header-note">A clearer view of code</span>
-      </header>
-      <main id="main" className="main">
-        <div className="eyebrow">
-          <span aria-hidden="true" /> A new perspective
-        </div>
-        <h1>Understand the shape of your code.</h1>
-        <p className="intro">
-          Z1N Atlas is being built to help you explore codebases through their
-          connections and evidence-backed explanations.
-        </p>
-        <div className="status">
-          <span className="status-label">In development</span>
-          <p>
-            Repository exploration and AI explanations are planned and are not
-            available yet.
+      <Header />
+      <main id="main" className="hero">
+        <div className="hero-copy">
+          <p className="eyebrow">
+            <span aria-hidden="true" /> A new perspective
           </p>
+          <h1>Understand the shape of your code.</h1>
+          <p className="intro">
+            Explore the connections in a codebase and find your way from
+            questions to evidence.
+          </p>
+          <Link className="button primary" href="/import">
+            Explore a project <span aria-hidden="true">→</span>
+          </Link>
+          <p className="availability">
+            Repository import and AI explanations are in development.
+          </p>
+        </div>
+        <div className="hero-art">
+          <Image
+            src="/assets/hero-graph.svg"
+            alt=""
+            width={800}
+            height={800}
+            priority
+          />
         </div>
       </main>
       <footer className="footer">
         <span>Visualize. Explore. Understand.</span>
-        <span>Built for curious minds.</span>
+        <span>Read-only by design.</span>
       </footer>
     </div>
   );

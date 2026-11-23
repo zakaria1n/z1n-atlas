@@ -3,11 +3,10 @@ import { describe, expect, it } from "vitest";
 import { Welcome } from "./welcome";
 
 describe("welcome screen", () => {
-  it("identifies the product and describes unavailable capabilities honestly", () => {
+  it("provides a real path to import and accurately states availability", () => {
     const html = renderToStaticMarkup(<Welcome />);
-    expect(html).toContain('alt="Z1N Atlas"');
-    expect(html).toContain("not available yet");
+    expect(html).toContain('href="/import"');
+    expect(html).toContain("in development");
     expect(html).toContain("<main");
-    expect(html).not.toContain("<button");
   });
 });
