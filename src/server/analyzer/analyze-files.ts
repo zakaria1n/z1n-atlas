@@ -3,7 +3,7 @@ import {
   SyntaxKind,
   type SourceFile as MorphSourceFile,
 } from "ts-morph";
-import path from "node:path";
+import { compilerOptions } from "./compiler-options";
 import type {
   CodeGraph,
   GraphEvidence,
@@ -32,38 +32,13 @@ function exportedNames(source: MorphSourceFile): string[] {
       }
   return [...new Set(names)].sort();
 }
-function resolve(
-  source: string,
-  specifier: string,
-  paths: Set<string>,
-): string | null {
-  if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
-  const stem = path.posix.normalize(
-    path.posix.join(path.posix.dirname(source), specifier),
-  );
-  if (stem === ".." || stem.startsWith("../") || stem.startsWith("/"))
-    return null;
-  const base = stem.replace(/\.(?:mjs|cjs|js|jsx)$/i, "");
-  const candidates = [
-    stem,
-    ...[".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"].map(
-      (ext) => base + ext,
-    ),
-    ...["index.ts", "index.tsx", "index.js", "index.jsx"].map(
-      (name) => `${stem}/${name}`,
-    ),
-  ];
-  const matches = [
-    ...new Set(candidates.filter((candidate) => paths.has(candidate))),
-  ];
-  return matches.length === 1 ? matches[0] : null;
-}
 export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
   const scripts = files.filter((file) => script.test(file.path));
+  const { options, configNotice } = compilerOptions(files);
   const project = new Project({
     useInMemoryFileSystem: true,
     skipAddingFilesFromTsConfig: true,
-    compilerOptions: { allowJs: true, noResolve: true },
+    compilerOptions: options,
   });
   for (const file of scripts)
     project.createSourceFile(`/workspace/${file.path}`, file.content);
@@ -83,18 +58,29 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
     const relations = [
       ...source.getImportDeclarations().map((node) => ({
         node,
-        specifier: node.getModuleSpecifierValue(),
+        resolved: node.getModuleSpecifierSourceFile(),
         kind: "imports" as const,
       })),
       ...source.getExportDeclarations().flatMap((node) => {
-        const specifier = node.getModuleSpecifierValue();
-        return specifier
-          ? [{ node, specifier, kind: "re-exports" as const }]
+        return node.getModuleSpecifierValue()
+          ? [
+              {
+                node,
+                resolved: node.getModuleSpecifierSourceFile(),
+                kind: "re-exports" as const,
+              },
+            ]
           : [];
       }),
     ];
     for (const relation of relations) {
-      const target = resolve(file.path, relation.specifier, paths);
+      const target = relation.resolved
+        ?.getFilePath()
+        .replace(/^\/workspace\//, "");
+      if (target && !paths.has(target)) {
+        unresolved++;
+        continue;
+      }
       if (!target) {
         unresolved++;
         continue;
@@ -129,7 +115,6 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
     edges,
     evidence,
     unresolved,
-    notice:
-      "Static imports and re-exports only. External packages, aliases, dynamic imports, calls and HTTP routes are not traced. A dependency is not an execution trace.",
+    notice: `Static imports and re-exports only. Dynamic imports, calls and HTTP routes are not traced. A dependency is not an execution trace. ${configNotice}`,
   };
 }
