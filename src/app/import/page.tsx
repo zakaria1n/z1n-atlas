@@ -22,7 +22,7 @@ export default function ImportPage() {
           be modified or executed.
         </p>
         <Link href="/workspace" className="text-link">
-          See the empty workspace →
+          Open workspace →
         </Link>
       </main>
     </div>

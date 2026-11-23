@@ -2,9 +2,9 @@
 
 **Visualize. Explore. Understand.**
 
-Z1N Atlas is an application in development for exploring source code through a visual map and evidence-backed explanations. The application provides responsive welcome, import, settings, and empty workspace screens. It can read a bounded selection of source files from a public GitHub repository or a browser-selected local folder and display an import summary.
+Z1N Atlas is an application in development for exploring source code through a visual map and evidence-backed explanations. The application provides responsive welcome, import, settings, and empty workspace screens. It can read a bounded selection of source files from a public GitHub repository or a browser-selected local folder and browse the selected files with a read-only, syntax-highlighted inspector.
 
-File browsing, code analysis, graph visualization, AI explanations, and feature journeys are **planned** and are not available yet. Imported source is kept in browser memory for the current app session; the workspace does not yet display it.
+Code analysis, graph visualization, AI explanations, and feature journeys are **planned** and are not available yet. Imported source is kept in browser memory for the current app session; the workspace displays selected files without editing them.
 
 ## Getting started
 

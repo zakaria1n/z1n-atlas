@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import Link from "next/link";
 import {
   directoryFiles,
   readLocalFiles,
@@ -133,9 +134,11 @@ export function LocalImport() {
           )}
           <p>
             Excluded folders are not included in the skipped file count. The
-            selection is held in memory until reload or tab closure; file
-            browsing is not available yet.
+            selection is held in memory until reload or tab closure.
           </p>
+          <Link className="text-link" href="/workspace">
+            Browse imported files →
+          </Link>
         </div>
       )}
     </section>

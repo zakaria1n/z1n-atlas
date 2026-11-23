@@ -431,3 +431,73 @@ button:disabled {
 .result h3 {
   font-weight: 700;
 }
+.drawer {
+  overflow-y: auto;
+}
+.drawer label {
+  display: block;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+.drawer input {
+  width: 100%;
+  padding: 0.7rem;
+  margin: 0.5rem 0 1rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+}
+.file-tree {
+  list-style: none;
+  padding-left: 1rem;
+  margin: 0.25rem 0;
+}
+.drawer > .file-tree {
+  padding-left: 0;
+}
+.file-tree summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.35rem 0.2rem;
+}
+.file-tree button {
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  padding: 0.4rem;
+  overflow-wrap: anywhere;
+}
+.file-tree button:hover {
+  background: #eaf1ff;
+}
+.inspector {
+  max-height: 75vh;
+  overflow: auto;
+}
+.source-path {
+  overflow-wrap: anywhere;
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+.code-view {
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.code-line {
+  display: block;
+  min-width: max-content;
+}
+.line-number {
+  display: inline-block;
+  width: 3.5em;
+  padding-right: 1em;
+  text-align: right;
+  color: #64748b;
+  user-select: none;
+}

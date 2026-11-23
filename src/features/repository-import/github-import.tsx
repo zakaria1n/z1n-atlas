@@ -1,5 +1,6 @@
 "use client";
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRepositorySession, type SourceFile } from "./repository-session";
 import { parseGitHubRepository } from "@/core/repository/github-url";
 
@@ -111,7 +112,10 @@ export function GitHubImport() {
               GitHub returned a truncated file tree; coverage is incomplete.
             </p>
           )}
-          <p>The summary is temporary; file browsing is not available yet.</p>
+          <p>Source is held in memory until reload or tab closure.</p>
+          <Link className="text-link" href="/workspace">
+            Browse imported files →
+          </Link>
         </div>
       )}
     </section>
