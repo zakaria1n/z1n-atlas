@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js and builds
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Test and coverage artifacts
+coverage/
+playwright-report/
+test-results/
+
+# Logs and local runtime files
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+.DS_Store
+Thumbs.db
+
+# Local credentials and environment
+.env
+.env.*
+!.env.example
+
+# Editors / local tooling
+.vscode/
+.idea/
+
+# Local caches
+.cache/
+.turbo/

@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #0f172a;
+  --ivory: #faf7f2;
+  --coral: #f47f63;
+  --cobalt: #2563eb;
+  --mint: #a7e3d0;
+  --border: #e6e1dd;
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  min-height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--ivory);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+}
+:focus-visible {
+  outline: 3px solid var(--cobalt);
+  outline-offset: 4px;
+}
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 clamp(1.5rem, 6vw, 6rem);
+}
+.header {
+  min-height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.header img {
+  width: 180px;
+  height: auto;
+}
+.header-note {
+  color: #475569;
+  font-size: 0.85rem;
+}
+.main {
+  width: min(100%, 850px);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 5rem 0;
+}
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.eyebrow span {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--coral);
+}
+h1 {
+  max-width: 780px;
+  margin: 1.7rem 0;
+  font-size: clamp(3rem, 7.7vw, 6.5rem);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  font-weight: 650;
+}
+.intro {
+  max-width: 590px;
+  margin: 0;
+  color: #475569;
+  font-size: clamp(1.1rem, 2vw, 1.35rem);
+  line-height: 1.65;
+}
+.status {
+  max-width: 570px;
+  margin-top: 3rem;
+  padding: 1.25rem 1.5rem;
+  border-left: 3px solid var(--mint);
+  background: #fff;
+}
+.status-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.status p {
+  margin: 0.5rem 0 0;
+  line-height: 1.5;
+  color: #475569;
+}
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--border);
+  color: #475569;
+  font-size: 0.8rem;
+}
+@media (max-width: 600px) {
+  .header {
+    min-height: 80px;
+  }
+  .header-note {
+    display: none;
+  }
+  .main {
+    padding: 4rem 0;
+  }
+  .footer {
+    flex-direction: column;
+  }
+}

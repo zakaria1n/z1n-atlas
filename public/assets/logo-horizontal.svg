@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="220" viewBox="0 0 920 220" fill="none">
+  <rect width="920" height="220" fill="none"/>
+  <g transform="translate(24,14)">
+    <g stroke="#0F172A" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="36" y1="148" x2="74" y2="72"/>
+      <line x1="74" y1="72" x2="142" y2="72"/>
+      <line x1="142" y1="72" x2="118" y2="148"/>
+      <line x1="36" y1="148" x2="118" y2="148"/>
+    </g>
+    <circle cx="36" cy="148" r="18" fill="#0F172A"/>
+    <circle cx="74" cy="72" r="18" fill="#0F172A"/>
+    <circle cx="118" cy="148" r="18" fill="#0F172A"/>
+    <circle cx="142" cy="72" r="18" fill="#F47F63"/>
+  </g>
+  <text x="210" y="138" font-family="Inter, Arial, Helvetica, sans-serif" font-size="92" font-weight="800" fill="#0F172A">Z1N Atlas</text>
+</svg>
