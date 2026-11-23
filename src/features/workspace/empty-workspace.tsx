@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { useRef } from "react";
+import { useRepositorySession } from "@/features/repository-import/repository-session";
 
 export function EmptyWorkspace() {
+  const { session } = useRepositorySession();
   const files = useRef<HTMLDialogElement>(null);
   const inspector = useRef<HTMLDialogElement>(null);
   const assistant = useRef<HTMLDialogElement>(null);
   return (
     <main className="workspace">
       <div className="workspace-bar">
-        <span>Explore / No project open</span>
+        <span>Explore / {session ? session.label : "No project open"}</span>
         <button
           className="secondary"
           onClick={() => files.current?.showModal()}
@@ -23,10 +25,7 @@ export function EmptyWorkspace() {
           ✳
         </div>
         <h1>Your atlas starts here.</h1>
-        <p>
-          The workspace is not connected to imported projects yet. File browsing
-          and graph exploration are in development.
-        </p>
+        <p>File browsing and graph exploration are in development.</p>
         <Link href="/import" className="button primary">
           Explore import options →
         </Link>
@@ -55,7 +54,7 @@ export function EmptyWorkspace() {
           </button>
         </form>
         <h2 id="files-title">Files</h2>
-        <p>No project is open. File browsing is in development.</p>
+        <p>File browsing is in development.</p>
         <Link href="/import" className="text-link">
           Import options →
         </Link>

@@ -1,15 +1,17 @@
 "use client";
 import { useState, type FormEvent } from "react";
+import { useRepositorySession, type SourceFile } from "./repository-session";
 import { parseGitHubRepository } from "@/core/repository/github-url";
 
 type Summary = {
   repository: { url: string };
   commit: string;
-  files: { path: string }[];
+  files: SourceFile[];
   skipped: number;
   truncated: boolean;
 };
 export function GitHubImport() {
+  const { setSession } = useRepositorySession();
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,7 +42,16 @@ export function GitHubImport() {
         );
         return;
       }
-      setSummary(data as Summary);
+      const snapshot = data as Summary;
+      setSummary(snapshot);
+      setSession({
+        label: snapshot.repository.url,
+        origin: "github",
+        files: snapshot.files,
+        skipped: snapshot.skipped,
+        truncated: snapshot.truncated,
+        commit: snapshot.commit,
+      });
     } catch {
       setError(
         "Could not reach the server. Check your connection and try again.",

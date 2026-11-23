@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LocalImport } from "@/features/repository-import/local-import";
 import { GitHubImport } from "@/features/repository-import/github-import";
 import { Header } from "@/components/layout/header";
 
@@ -10,19 +11,11 @@ export default function ImportPage() {
         <p className="eyebrow">Start exploring</p>
         <h1>Open a project.</h1>
         <p className="intro">
-          Read a public repository or choose a local folder when that option is
-          available.
+          Read a public repository or choose a local folder.
         </p>
         <div className="options">
           <GitHubImport />
-          <section className="option">
-            <div className="option-icon mint" aria-hidden="true">
-              ⌑
-            </div>
-            <h2>Local folder</h2>
-            <p>Choose a folder explicitly from your device.</p>
-            <button disabled>Local import coming soon</button>
-          </section>
+          <LocalImport />
         </div>
         <p className="privacy">
           Z1N Atlas is designed for read-only exploration. Your files will not

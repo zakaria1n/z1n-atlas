@@ -1,9 +1,6 @@
+import { isEligiblePath } from "@/core/repository/file-filter";
 import { describe, expect, it, vi } from "vitest";
-import {
-  GitHubImportError,
-  importGitHubRepository,
-  isEligiblePath,
-} from "./import-repository";
+import { GitHubImportError, importGitHubRepository } from "./import-repository";
 
 const repo = {
   owner: "example",

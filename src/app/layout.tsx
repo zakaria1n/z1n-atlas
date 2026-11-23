@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "@/styles/globals.css";
+import { RepositoryProvider } from "@/features/repository-import/repository-session";
 
 export const metadata: Metadata = {
   title: "Z1N Atlas",
@@ -11,7 +12,9 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <RepositoryProvider>{children}</RepositoryProvider>
+      </body>
     </html>
   );
 }
