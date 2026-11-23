@@ -3,6 +3,7 @@ import {
   SyntaxKind,
   type SourceFile as MorphSourceFile,
 } from "ts-morph";
+import { addSymbolsAndCalls } from "./symbols-and-calls";
 import { compilerOptions } from "./compiler-options";
 import type {
   CodeGraph,
@@ -110,11 +111,12 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
         (call) => call.getExpression().getKind() === SyntaxKind.ImportKeyword,
       ).length;
   }
+  addSymbolsAndCalls(project, paths, { nodes, edges, evidence });
   return {
     nodes,
     edges,
     evidence,
     unresolved,
-    notice: `Static imports and re-exports only. Dynamic imports, calls and HTTP routes are not traced. A dependency is not an execution trace. ${configNotice}`,
+    notice: `Static imports and re-exports only. Resolved static calls are included; dynamic dispatch and HTTP routes are not traced. Static relationships are not runtime traces. ${configNotice}`,
   };
 }

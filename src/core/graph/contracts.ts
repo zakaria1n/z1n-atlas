@@ -5,12 +5,20 @@ export type GraphEvidence = {
   endLine: number;
   snippet: string;
 };
-export type GraphNode = { id: string; path: string; exports: string[] };
+export type GraphNode = {
+  id: string;
+  path: string;
+  exports: string[];
+  kind?: "file" | "function" | "method" | "class";
+  name?: string;
+  startLine?: number;
+  endLine?: number;
+};
 export type GraphEdge = {
   id: string;
   source: string;
   target: string;
-  kind: "imports" | "re-exports";
+  kind: "imports" | "re-exports" | "contains" | "calls" | "references";
   confidence: "confirmed";
   evidenceId: string;
 };

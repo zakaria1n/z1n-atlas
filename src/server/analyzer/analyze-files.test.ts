@@ -16,17 +16,23 @@ describe("static source analysis", () => {
       result.nodes.find((node) => node.path === "src/run.ts")?.exports,
     ).toEqual(["run"]);
     expect(
-      result.edges.map((edge) => [edge.kind, edge.source, edge.target]),
+      result.edges
+        .filter((edge) => edge.kind === "imports" || edge.kind === "re-exports")
+        .map((edge) => [edge.kind, edge.source, edge.target]),
     ).toEqual([
       ["imports", "src/index.ts", "src/run.ts"],
       ["re-exports", "src/index.ts", "src/run.ts"],
     ]);
     expect(
-      result.evidence.map((item) => [
-        item.startLine,
-        item.endLine,
-        item.snippet,
-      ]),
+      result.evidence
+        .filter((item) =>
+          result.edges.some(
+            (edge) =>
+              edge.evidenceId === item.id &&
+              (edge.kind === "imports" || edge.kind === "re-exports"),
+          ),
+        )
+        .map((item) => [item.startLine, item.endLine, item.snippet]),
     ).toEqual([
       [1, 1, 'import { run } from "./run";'],
       [2, 2, 'export { run } from "./run";'],
