@@ -5,3 +5,4 @@ export * from "./repository/github-url";
 export * from "./http";
 export * from "./providers";
 export * from "./chat";
+export * from "./journey";
