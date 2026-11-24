@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatAnswer } from "@z1n/contracts";
 import { useProviderSession } from "@/features/provider-settings/provider-session";
 import type { RepositorySession } from "@/features/repository-import/repository-session";
-import { apiOrigin, askRepository } from "@/lib/api-client";
+import { apiOriginLabel, askRepository } from "@/lib/api-client";
 
 export function Assistant({
   session,
@@ -100,9 +100,10 @@ export function Assistant({
             onChange={(event) => setConsent(event.target.checked)}
           />{" "}
           <span>
-            I agree to send the selected files to <strong>{apiOrigin()}</strong>{" "}
-            for analysis and relevant excerpts to the selected AI provider.
-            Provider requests may incur charges.
+            I agree to send the selected files to{" "}
+            <strong>{apiOriginLabel()}</strong> for analysis and relevant
+            excerpts to the selected AI provider. Provider requests may incur
+            charges.
           </span>
         </label>
         <div className="provider-actions">

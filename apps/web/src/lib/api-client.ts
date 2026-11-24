@@ -42,6 +42,13 @@ function backendUrl(): string {
 export function apiOrigin(): string {
   return backendUrl();
 }
+export function apiOriginLabel(): string {
+  try {
+    return apiOrigin();
+  } catch {
+    return "unavailable (invalid API address)";
+  }
+}
 async function send(
   path: string,
   body: unknown,

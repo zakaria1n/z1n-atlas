@@ -6,7 +6,7 @@ describe("welcome screen", () => {
   it("provides a real path to import and accurately states availability", () => {
     const html = renderToStaticMarkup(<Welcome />);
     expect(html).toContain('href="/import"');
-    expect(html).toContain("in development");
+    expect(html).toContain("local projects");
     expect(html).toContain("<main");
   });
 });

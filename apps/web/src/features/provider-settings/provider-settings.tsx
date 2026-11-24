@@ -1,7 +1,11 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { providerRequestSchema, type Provider } from "@z1n/contracts";
-import { apiOrigin, discoverModels, testProviderModel } from "@/lib/api-client";
+import {
+  apiOriginLabel,
+  discoverModels,
+  testProviderModel,
+} from "@/lib/api-client";
 import { useProviderSession } from "./provider-session";
 
 export function ProviderSettings() {
@@ -93,8 +97,9 @@ export function ProviderSettings() {
         <h2 id="provider-heading">Your provider, your choice.</h2>
         <p>
           Keys stay in this browser tab’s memory and are cleared on reload. When
-          you retrieve models, the key is sent to <strong>{apiOrigin()}</strong>{" "}
-          and forwarded to the selected provider.
+          you retrieve models, the key is sent to{" "}
+          <strong>{apiOriginLabel()}</strong> and forwarded to the selected
+          provider.
         </p>
         <p>
           Model discovery checks the list only. Testing a model sends a short

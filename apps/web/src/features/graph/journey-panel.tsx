@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { CodeGraph, GraphEdge, Journey } from "@z1n/contracts";
 import type { RepositorySession } from "@/features/repository-import/repository-session";
-import { apiOrigin, requestJourney } from "@/lib/api-client";
+import { apiOriginLabel, requestJourney } from "@/lib/api-client";
 
 const descriptions: Partial<Record<GraphEdge["kind"], string>> = {
   calls: "A static call links these symbols.",
@@ -91,7 +91,7 @@ export function JourneyPanel({
             onChange={(event) => setConsent(event.target.checked)}
           />
           <span>
-            Send the selected files again to {apiOrigin()} for analysis.
+            Send the selected files again to {apiOriginLabel()} for analysis.
           </span>
         </label>
         <div className="provider-actions">

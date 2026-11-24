@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -7,6 +7,7 @@ import {
   ReactFlow,
   type Edge,
   type Node,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { CodeGraph, GraphEdge, Journey } from "@z1n/contracts";
@@ -28,20 +29,44 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
     return () => media.removeEventListener("change", update);
   }, []);
   const [filter, setFilter] = useState("all");
+  const [view, setView] = useState<"files" | "all">("files");
+  const flow = useRef<ReactFlowInstance | null>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      void flow.current?.fitView({
+        padding: 0.15,
+        minZoom: 0.65,
+        maxZoom: 0.9,
+        duration: 0,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [view]);
   const [selected, setSelected] = useState<GraphEdge | null>(null);
   const [journey, setJourney] = useState<Journey | null>(null);
   const byId = useMemo(
     () => new Map(graph.nodes.map((node) => [node.id, node])),
     [graph],
   );
-  const visible = useMemo(
+  const visibleNodes = useMemo(
     () =>
-      graph.edges.filter((edge) => filter === "all" || edge.kind === filter),
-    [graph, filter],
+      view === "files"
+        ? graph.nodes.filter((node) => !node.kind || node.kind === "file")
+        : graph.nodes,
+    [graph, view],
   );
+  const visible = useMemo(() => {
+    const ids = new Set(visibleNodes.map((node) => node.id));
+    return graph.edges.filter(
+      (edge) =>
+        ids.has(edge.source) &&
+        ids.has(edge.target) &&
+        (filter === "all" || edge.kind === filter),
+    );
+  }, [graph, filter, visibleNodes]);
   const nodes = useMemo<Node[]>(
     () =>
-      graph.nodes.map((node, index) => ({
+      visibleNodes.map((node, index) => ({
         id: node.id,
         position: {
           x: (index % (mobile ? 2 : 5)) * 230,
@@ -53,7 +78,7 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           ? { border: "3px solid #c2410c", background: "#fff7ed" }
           : undefined,
       })),
-    [graph, mobile, journey],
+    [visibleNodes, mobile, journey],
   );
   const edges = useMemo<Edge[]>(
     () =>
@@ -122,10 +147,25 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           journey={journey}
           onJourney={(value) => {
             setJourney(value);
-            if (value) setFilter("all");
+            if (value) {
+              setFilter("all");
+              setView("all");
+            }
           }}
           onOpenFile={onOpenFile}
         />
+        <label htmlFor="graph-scope">Graph scope</label>
+        <select
+          id="graph-scope"
+          value={view}
+          onChange={(event) => {
+            setView(event.target.value as "files" | "all");
+            setJourney(null);
+          }}
+        >
+          <option value="files">Files</option>
+          <option value="all">Files and symbols</option>
+        </select>
         <label htmlFor="edge-filter">Relationship type</label>
         <select
           id="edge-filter"
@@ -161,6 +201,9 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
         </details>
       </div>
       <ReactFlow
+        onInit={(instance) => {
+          flow.current = instance;
+        }}
         forceColorMode="light"
         minZoom={0.65}
         maxZoom={1.8}

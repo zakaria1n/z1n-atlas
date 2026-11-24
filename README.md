@@ -57,4 +57,18 @@ pnpm format:check
 pnpm build
 ```
 
-The graph uses React Flow and the inspector uses Prism React Renderer. The analysis engine uses ts-morph; these packages are distributed under their respective open-source licenses.
+## Try it
+
+1. Start both applications, choose **Explore**, and import the public [Z1N Atlas repository](https://github.com/zakaria1n/z1n-atlas).
+2. Open the workspace and analyze the selected files. The importer reports skipped files, so the resulting map is a partial view of the repository.
+3. Choose a file or relationship to inspect its source. Switch **Graph scope** to include symbols, or enter a name under **Feature Journey** to highlight a candidate static path.
+4. Optionally select a provider and model in Settings to ask an evidence-linked question. Read the sharing notice before sending source excerpts to a provider.
+
+The screenshots show the running application. The journey example uses a synthetic React/Express/Prisma test project.
+
+![Z1N Atlas welcome screen](docs/screenshots/home.png)
+![Feature Journey highlighting a candidate path](docs/screenshots/journey.png)
+
+## Dependencies and attribution
+
+The graph uses [React Flow](https://reactflow.dev/) and the inspector uses [Prism React Renderer](https://github.com/FormidableLabs/prism-react-renderer). The analysis engine uses [ts-morph](https://github.com/dsherret/ts-morph). Their licenses and those of transitive packages are distributed with the dependencies; `pnpm licenses list --prod` lists the installed production licenses. Platform-specific image-processing binaries may include LGPL-licensed components; review their included notices when redistributing binaries.
