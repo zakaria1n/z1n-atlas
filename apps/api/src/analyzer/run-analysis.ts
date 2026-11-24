@@ -7,12 +7,26 @@ type WorkerResponse = {
   error?: string;
   progress?: AnalysisStage;
 };
+export type AnalysisOptions = {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  onProgress?: (stage: AnalysisStage) => void;
+  maxHeapMb?: number;
+};
+// The worker needs far more memory than the size of the source it analyzes.
+// The heap is sized for the largest selection the contracts permit, and the
+// timeout is a backstop well above the slowest selection measured.
+const DEFAULT_TIMEOUT_MS = 45_000;
+const DEFAULT_MAX_HEAP_MB = 1_024;
 export class AnalysisError extends Error {}
 export function runAnalysis(
   files: AnalyzerFile[],
-  timeoutMs = 15_000,
-  signal?: AbortSignal,
-  progress?: (stage: AnalysisStage) => void,
+  {
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    signal,
+    onProgress,
+    maxHeapMb = DEFAULT_MAX_HEAP_MB,
+  }: AnalysisOptions = {},
 ): Promise<CodeGraph> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -21,7 +35,7 @@ export function runAnalysis(
     }
     const worker = new Worker(require.resolve("@z1n/analysis-core/worker"), {
       workerData: files,
-      resourceLimits: { maxOldGenerationSizeMb: 256, stackSizeMb: 4 },
+      resourceLimits: { maxOldGenerationSizeMb: maxHeapMb, stackSizeMb: 4 },
     });
     let settled = false;
     const finish = (error?: Error, graph?: CodeGraph) => {
@@ -42,7 +56,7 @@ export function runAnalysis(
     signal?.addEventListener("abort", cancel, { once: true });
     worker.on("message", (message: WorkerResponse) => {
       if (message.progress) {
-        if (!settled) progress?.(message.progress);
+        if (!settled) onProgress?.(message.progress);
         return;
       }
       finish(
@@ -50,8 +64,14 @@ export function runAnalysis(
         message.graph,
       );
     });
-    worker.once("error", () =>
-      finish(new AnalysisError("The analysis worker failed.")),
+    worker.once("error", (error) =>
+      finish(
+        new AnalysisError(
+          (error as NodeJS.ErrnoException).code === "ERR_WORKER_OUT_OF_MEMORY"
+            ? "The selection exceeded the memory available for analysis. Analyze fewer or smaller files."
+            : "The analysis worker failed.",
+        ),
+      ),
     );
     worker.once("exit", () =>
       finish(

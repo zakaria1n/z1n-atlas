@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { MAX_SOURCE_FILES } from "@z1n/contracts";
 import { directoryFiles, readLocalFiles, type Directory } from "./local-reader";
 
 type Item = { path: string; file: () => Promise<File> };
@@ -31,18 +32,19 @@ describe("local source selection", () => {
     expect(await original.text()).toBe("export const value = 1;");
   });
   it("caps selection and marks incomplete coverage", async () => {
+    const total = MAX_SOURCE_FILES + 5;
     const result = await readLocalFiles(
       source(
-        Array.from({ length: 205 }, (_, index) =>
+        Array.from({ length: total }, (_, index) =>
           make(`src/file${index}.ts`, "ok"),
         ),
       ),
     );
-    expect(result.files).toHaveLength(200);
+    expect(result.files).toHaveLength(MAX_SOURCE_FILES);
     expect(result.skipped).toBe(5);
     expect(result.truncated).toBe(true);
     expect(result.indexTruncated).toBe(false);
-    expect(result.inventory).toHaveLength(205);
+    expect(result.inventory).toHaveLength(total);
     const extra = result.inventory.find(
       (item) => !result.files.some((file) => file.path === item.path),
     )!;

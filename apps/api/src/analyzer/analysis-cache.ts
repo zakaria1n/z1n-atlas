@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { CodeGraph } from "@z1n/contracts";
+import { MAX_GRAPH_BYTES } from "./limits";
 
 type Source = { path: string; content: string };
 type Entry = {
@@ -20,8 +21,8 @@ function digest(files: Source[]) {
   return hash.digest("hex");
 }
 export function createAnalysisCache({
-  maxEntries = 4,
-  maxBytes = 4_000_000,
+  maxEntries = 2,
+  maxBytes = MAX_GRAPH_BYTES,
   ttlMs = 300_000,
 } = {}) {
   const entries = new Map<string, Entry>();

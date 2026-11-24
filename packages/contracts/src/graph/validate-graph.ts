@@ -1,15 +1,23 @@
 import type { CodeGraph } from "./contracts";
 
 type Input = { path: string; content: string };
+type Evidence = CodeGraph["evidence"][number];
+const lineBreak = /\r\n|\r|\n/;
+
 export function graphIsValid(graph: CodeGraph, files: Input[]): boolean {
-  const fileMap = new Map(files.map((file) => [file.path, file.content]));
+  // Graphs of large selections carry tens of thousands of evidence items, so
+  // every file is split into lines once instead of once per item.
+  const lines = new Map(
+    files.map((file) => [file.path, file.content.split(lineBreak)]),
+  );
+  const lineCount = (path: string) => lines.get(path)?.length ?? 0;
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]));
   const nodes = new Set(nodeMap.keys());
   if (
     nodes.size !== graph.nodes.length ||
     graph.nodes.some(
       (node) =>
-        !fileMap.has(node.path) ||
+        !lines.has(node.path) ||
         ((!node.kind || node.kind === "file") && node.id !== node.path) ||
         (Boolean(node.kind && node.kind !== "file") &&
           (!node.id.startsWith(`${node.path}#`) ||
@@ -18,8 +26,7 @@ export function graphIsValid(graph: CodeGraph, files: Input[]): boolean {
             !node.endLine ||
             node.startLine < 1 ||
             node.endLine < node.startLine ||
-            node.endLine >
-              (fileMap.get(node.path)?.split(/\r\n|\r|\n/).length ?? 0))),
+            node.endLine > lineCount(node.path))),
     )
   )
     return false;
@@ -35,18 +42,21 @@ export function graphIsValid(graph: CodeGraph, files: Input[]): boolean {
       ...(edge.supportingEvidenceIds ?? []),
     ]),
   );
-  const validEvidence = (item: (typeof graph.evidence)[number]) => {
-    const lines = fileMap.get(item.filePath)?.split(/\r\n|\r|\n/);
-    return Boolean(
-      lines &&
-      item.startLine >= 1 &&
-      item.endLine >= item.startLine &&
-      item.endLine <= lines.length &&
-      lines
-        .slice(item.startLine - 1, item.endLine)
-        .join("\n")
-        .includes(item.snippet.replace(/\r\n|\r/g, "\n")),
-    );
+  const validEvidence = (item: Evidence) => {
+    const fileLines = lines.get(item.filePath);
+    if (
+      !fileLines ||
+      item.startLine < 1 ||
+      item.endLine < item.startLine ||
+      item.endLine > fileLines.length
+    )
+      return false;
+    if (item.startLine === item.endLine)
+      return fileLines[item.startLine - 1].includes(item.snippet);
+    return fileLines
+      .slice(item.startLine - 1, item.endLine)
+      .join("\n")
+      .includes(item.snippet.replace(/\r\n|\r/g, "\n"));
   };
   return (
     graph.edges.every((edge) => {

@@ -11,6 +11,8 @@ import {
 import type { GitHubRepository } from "@z1n/contracts";
 
 const MAX_TREE_BYTES = 8_000_000;
+// Raw content is served by a CDN that tolerates moderate parallelism.
+const FETCH_CONCURRENCY = 16;
 export type ImportedFile = { path: string; size: number; content: string };
 export type GitHubSnapshot = {
   repository: GitHubRepository;
@@ -216,7 +218,9 @@ export async function importGitHubRepository(
   signal?: AbortSignal,
 ): Promise<GitHubSnapshot> {
   const base = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
-  const deadline = AbortSignal.timeout(30_000);
+  // Reading a full 2,000-file selection takes about 40 seconds on a typical
+  // connection at this concurrency, so the deadline leaves room for it.
+  const deadline = AbortSignal.timeout(60_000);
   const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   try {
     const metadata = metadataSchema.parse(
@@ -272,9 +276,9 @@ export async function importGitHubRepository(
     const inventory = [...indexed.values()];
     skipped += candidates.length - selected.length;
     const files: ImportedFile[] = [];
-    for (let index = 0; index < selected.length; index += 8) {
+    for (let index = 0; index < selected.length; index += FETCH_CONCURRENCY) {
       combined.throwIfAborted();
-      const batch = selected.slice(index, index + 8);
+      const batch = selected.slice(index, index + FETCH_CONCURRENCY);
       const results = await Promise.all(
         batch.map(async (entry) => {
           const bytes = await getRaw(

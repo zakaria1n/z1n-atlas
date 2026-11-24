@@ -36,6 +36,7 @@ import { findJourney } from "./journey/find-journey";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 import { createAnalysisCache } from "./analyzer/analysis-cache";
 import { createAnalysisJobs } from "./analyzer/analysis-jobs";
+import { MAX_GRAPH_BYTES } from "./analyzer/limits";
 function validatedGraph(
   value: unknown,
   files: { path: string; content: string }[],
@@ -43,7 +44,7 @@ function validatedGraph(
   const graph = codeGraphSchema.parse(value);
   if (!graphIsValid(graph, files))
     throw new AnalysisError("Analysis returned invalid evidence.");
-  if (Buffer.byteLength(JSON.stringify(graph)) > 8_000_000)
+  if (Buffer.byteLength(JSON.stringify(graph)) > MAX_GRAPH_BYTES)
     throw new AnalysisError("The graph exceeded the result size limit.");
   return graph;
 }
@@ -51,9 +52,10 @@ function validatedGraph(
 export async function createApp(
   webOrigin = "http://localhost:3000",
 ): Promise<FastifyInstance> {
+  // Large enough for the largest permitted source selection as JSON.
   const app = Fastify({
     logger: false,
-    bodyLimit: 12_000_000,
+    bodyLimit: 32_000_000,
     requestTimeout: 45_000,
   });
   const analysisCache = createAnalysisCache();
@@ -199,11 +201,11 @@ export async function createApp(
     reply.raw.once("close", cancel);
     try {
       const graph = validatedGraph(
-        await runAnalysis(input.data.files, 15_000, abort.signal),
+        await runAnalysis(input.data.files, { signal: abort.signal }),
         input.data.files,
       );
       const analysisId = analysisCache.put(input.data.files, graph);
-      return codeGraphSchema.parse({ ...graph, analysisId });
+      return { ...graph, analysisId };
     } catch (error) {
       return reply.code(500).send({
         error:
@@ -227,11 +229,11 @@ export async function createApp(
     const id = analysisJobs.start(
       async (signal, progress) => {
         const graph = validatedGraph(
-          await runAnalysis(input.data.files, 15_000, signal, progress),
+          await runAnalysis(input.data.files, { signal, onProgress: progress }),
           input.data.files,
         );
         const analysisId = analysisCache.put(input.data.files, graph);
-        return codeGraphSchema.parse({ ...graph, analysisId });
+        return { ...graph, analysisId };
       },
       () => {
         active--;
@@ -366,15 +368,20 @@ export async function createApp(
     };
     reply.raw.once("close", cancel);
     try {
-      const graph =
-        analysisCache.get(input.data.analysisId, input.data.files) ??
-        (await runAnalysis(input.data.files, 15_000, abort.signal));
       const { provider, apiKey, model, question, files } = input.data;
+      const graph =
+        analysisCache.get(input.data.analysisId, files) ??
+        validatedGraph(
+          await runAnalysis(files, { signal: abort.signal }),
+          files,
+        );
       const answer = await answerQuestion(question, files, graph, (context) =>
         generateAnswer({ provider, apiKey, model }, context, abort.signal),
       );
       return chatAnswerSchema.parse(answer);
     } catch (error) {
+      if (error instanceof AnalysisError)
+        return reply.code(500).send({ error: error.message });
       if (error instanceof ProviderError) {
         const status =
           error.code === "INVALID_KEY"
@@ -410,12 +417,12 @@ export async function createApp(
     };
     reply.raw.once("close", cancel);
     try {
-      const graph = codeGraphSchema.parse(
+      const graph =
         analysisCache.get(input.data.analysisId, input.data.files) ??
-          (await runAnalysis(input.data.files, 15_000, abort.signal)),
-      );
-      if (!graphIsValid(graph, input.data.files))
-        throw new Error("Invalid graph.");
+        validatedGraph(
+          await runAnalysis(input.data.files, { signal: abort.signal }),
+          input.data.files,
+        );
       let paths: string[] = [];
       if (input.data.ai) {
         const { provider, apiKey, model } = input.data.ai;
@@ -441,6 +448,8 @@ export async function createApp(
         );
       return journeySchema.parse(journey);
     } catch (error) {
+      if (error instanceof AnalysisError)
+        return reply.code(500).send({ error: error.message });
       if (error instanceof ProviderError) {
         const status =
           error.code === "INVALID_KEY"

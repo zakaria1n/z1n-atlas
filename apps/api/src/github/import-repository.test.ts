@@ -1,4 +1,4 @@
-import { isEligiblePath } from "@z1n/contracts";
+import { isEligiblePath, MAX_SOURCE_FILES } from "@z1n/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   GitHubImportError,
@@ -84,7 +84,7 @@ describe("GitHub importer", () => {
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
   it("caps a large repository and reports omitted files", async () => {
-    const entries = Array.from({ length: 205 }, (_, i) => ({
+    const entries = Array.from({ length: MAX_SOURCE_FILES + 5 }, (_, i) => ({
       type: "blob",
       mode: "100644",
       path: `src/file${i}.ts`,
@@ -95,17 +95,49 @@ describe("GitHub importer", () => {
       { private: false, default_branch: "main" },
       { sha },
       { truncated: false, tree: entries },
-      ...Array.from({ length: 200 }, () => ({
+      ...Array.from({ length: MAX_SOURCE_FILES }, () => ({
         encoding: "base64",
         size: 3,
         content: "YWJj",
       })),
     ]);
     const snapshot = await importGitHubRepository(repo, fetcher);
-    expect(snapshot.files).toHaveLength(200);
-    expect(snapshot.inventory).toHaveLength(205);
+    expect(snapshot.files).toHaveLength(MAX_SOURCE_FILES);
+    expect(snapshot.inventory).toHaveLength(MAX_SOURCE_FILES + 5);
     expect(snapshot.skipped).toBe(5);
-    expect(fetcher).toHaveBeenCalledTimes(203);
+    expect(fetcher).toHaveBeenCalledTimes(MAX_SOURCE_FILES + 3);
+  });
+  it("does not spend the analysis budget on documents before application code", async () => {
+    const entries = [
+      ...Array.from({ length: 40 }, (_, i) => ({
+        type: "blob" as const,
+        mode: "100644",
+        path: `src/file${i}.ts`,
+        size: 3,
+        sha,
+      })),
+      ...Array.from({ length: 60 }, (_, i) => ({
+        type: "blob" as const,
+        mode: "100644",
+        path: `docs/guide${i}.md`,
+        size: 3,
+        sha,
+      })),
+    ];
+    const fetcher = responses([
+      { private: false, default_branch: "main" },
+      { sha },
+      { truncated: false, tree: entries },
+      ...Array.from({ length: 100 }, () => ({
+        encoding: "base64",
+        size: 3,
+        content: "YWJj",
+      })),
+    ]);
+    const snapshot = await importGitHubRepository(repo, fetcher);
+    expect(snapshot.files).toHaveLength(100);
+    expect(snapshot.skipped).toBe(0);
+    expect(snapshot.inventory).toHaveLength(100);
   });
   it("surfaces rate limits without returning upstream content", async () => {
     const fetcher = vi.fn(
