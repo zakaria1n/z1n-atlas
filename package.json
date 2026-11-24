@@ -13,10 +13,12 @@
     "lint": "eslint .",
     "typecheck": "pnpm build:packages && pnpm --filter @z1n/api typecheck && pnpm --filter @z1n/web typecheck",
     "test": "pnpm build:packages && pnpm --filter @z1n/api build && vitest run",
+    "test:e2e": "playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^24.19.2",
     "eslint": "^9.39.5",
     "eslint-config-next": "16.4.6",

@@ -55,7 +55,11 @@ pnpm typecheck
 pnpm test
 pnpm format:check
 pnpm build
+pnpm exec playwright install chromium
+pnpm test:e2e
 ```
+
+The browser smoke test starts both applications, analyzes a synthetic local project through the real API, and mocks AI-provider responses. Stop any existing servers on ports 3000 and 4000 before running it.
 
 ## Try it
 
