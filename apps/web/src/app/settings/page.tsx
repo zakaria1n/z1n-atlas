@@ -1,4 +1,5 @@
 import { Header } from "@/components/layout/header";
+import { ProviderSettings } from "@/features/provider-settings/provider-settings";
 
 export default function SettingsPage() {
   return (
@@ -7,14 +8,10 @@ export default function SettingsPage() {
       <main className="interior narrow">
         <p className="eyebrow">Your preferences</p>
         <h1>Settings.</h1>
-        <p className="intro">AI provider settings are not available yet.</p>
-        <section className="notice">
-          <h2>Bring your own key</h2>
-          <p>
-            Support for OpenAI, Google Gemini and Anthropic is planned. Provider
-            keys cannot be configured in this version.
-          </p>
-        </section>
+        <p className="intro">
+          Choose how your atlas connects to an AI provider.
+        </p>
+        <ProviderSettings />
       </main>
     </div>
   );

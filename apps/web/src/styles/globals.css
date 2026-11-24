@@ -8,6 +8,74 @@
   --mint: #a7e3d0;
   --border: #e6e1dd;
 }
+.provider-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  margin: 3rem 0 5rem;
+  padding: 2rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: white;
+}
+.provider-settings h2 {
+  font-size: 1.8rem;
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+.provider-settings p {
+  color: #475569;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.provider-settings form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.provider-settings label {
+  font-weight: 700;
+}
+.provider-settings input,
+.provider-settings select {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.7rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+  background: white;
+  color: var(--ink);
+}
+.provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+.provider-submit {
+  background: var(--ink);
+  color: white;
+  border: 0;
+  cursor: pointer;
+}
+.provider-submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.provider-clear {
+  border: 0;
+  background: transparent;
+  color: #1d4ed8;
+  font-weight: 700;
+  cursor: pointer;
+}
+@media (max-width: 700px) {
+  .provider-settings {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    padding: 1.25rem;
+  }
+}
 
 * {
   box-sizing: border-box;

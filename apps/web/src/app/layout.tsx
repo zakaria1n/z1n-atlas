@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "@/styles/globals.css";
 import { RepositoryProvider } from "@/features/repository-import/repository-session";
+import { ProviderSessionProvider } from "@/features/provider-settings/provider-session";
 
 export const metadata: Metadata = {
   title: "Z1N Atlas",
@@ -13,7 +14,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <RepositoryProvider>{children}</RepositoryProvider>
+        <ProviderSessionProvider>
+          <RepositoryProvider>{children}</RepositoryProvider>
+        </ProviderSessionProvider>
       </body>
     </html>
   );

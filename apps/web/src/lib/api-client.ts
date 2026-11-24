@@ -4,8 +4,11 @@ import {
   codeGraphSchema,
   githubSnapshotSchema,
   graphIsValid,
+  providerRequestSchema,
+  modelListSchema,
   type AnalysisRequest,
   type GitHubRepository,
+  type ProviderRequest,
 } from "@z1n/contracts";
 
 const configured = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000";
@@ -57,6 +60,18 @@ export async function importPublicRepository(repository: GitHubRepository) {
   );
   if (!parsed.success)
     throw new Error("The server returned an invalid repository response.");
+  return parsed.data;
+}
+export async function discoverModels(
+  input: ProviderRequest,
+  signal?: AbortSignal,
+) {
+  const request = providerRequestSchema.parse(input);
+  const parsed = modelListSchema.safeParse(
+    await send("/api/providers/models", request, signal),
+  );
+  if (!parsed.success)
+    throw new Error("The server returned an invalid model list.");
   return parsed.data;
 }
 export async function analyzeRepository(
