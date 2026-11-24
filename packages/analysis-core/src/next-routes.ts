@@ -5,6 +5,8 @@ import {
   type GraphParts,
   type HttpRoute,
 } from "./framework-graph";
+import { addManifestEvidence, findNextManifest } from "./next-manifest";
+import type { AnalyzerFile } from "./analyze-files";
 import { symbolId } from "./symbols-and-calls";
 const methods = new Set([
   "GET",
@@ -19,6 +21,7 @@ const methods = new Set([
 export function addNextRoutes(
   project: Project,
   paths: Set<string>,
+  files: AnalyzerFile[],
   graph: GraphParts,
 ): { routes: HttpRoute[]; unresolved: number } {
   const routes: HttpRoute[] = [];
@@ -28,6 +31,11 @@ export function addNextRoutes(
       /(?:^|\/)app\/api\/(.+)\/route\.[cm]?[jt]s$/i.exec(filePath) ??
       /(?:^|\/)app\/api\/(route\.[cm]?[jt]s)$/i.exec(filePath);
     if (!match) continue;
+    const manifest = findNextManifest(filePath, files);
+    if (!manifest) {
+      unresolved++;
+      continue;
+    }
     const suffix = match[1].startsWith("route.") ? "" : match[1];
     if (
       suffix &&
@@ -64,6 +72,7 @@ export function addNextRoutes(
       const method = declaration.getName()!;
       const name = declaration.getNameNode();
       if (!name) continue;
+      const manifestEvidenceId = addManifestEvidence(manifest, graph);
       const nodeId = `${filePath}#next-route:${declaration.getStart()}:${method}`,
         evidenceId = evidence(name, graph);
       addNode(declaration, nodeId, `${method} ${pathname}`, "route", graph);
@@ -74,6 +83,7 @@ export function addNextRoutes(
         kind: "contains",
         confidence: "framework",
         evidenceId,
+        supportingEvidenceIds: [manifestEvidenceId],
       });
       const target = symbolId(declaration);
       if (graph.nodes.some((node) => node.id === target))
@@ -85,7 +95,13 @@ export function addNextRoutes(
           confidence: "framework",
           evidenceId,
         });
-      routes.push({ nodeId, path: pathname, method, evidenceId });
+      routes.push({
+        nodeId,
+        path: pathname,
+        method,
+        evidenceId,
+        supportingEvidenceIds: [manifestEvidenceId],
+      });
     }
   }
   return { routes, unresolved };

@@ -10,7 +10,7 @@ export type HttpRoute = {
   path: string;
   method: string;
   evidenceId: string;
-  mountEvidenceId?: string;
+  supportingEvidenceIds?: string[];
 };
 export function relative(node: Node): string {
   return node
@@ -35,7 +35,7 @@ export function addNode(
   node: Node,
   id: string,
   name: string,
-  kind: "route" | "http-call" | "database",
+  kind: "route" | "http-call" | "database" | "entrypoint",
   graph: GraphParts,
 ): void {
   graph.nodes.push({

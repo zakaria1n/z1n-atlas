@@ -100,7 +100,10 @@ export function GraphCanvas({ graph, onOpenFile }: Props) {
       <div className="graph-info">
         <strong>Source relationships</strong>
         <span>Solid: static or framework · dashed: heuristic</span>
-        <span>{graph.unresolved} unresolved references</span>
+        <span>
+          {graph.unresolved} unresolved imports or routes ·{" "}
+          {graph.unresolvedCalls} unresolved calls
+        </span>
         <label htmlFor="edge-filter">Relationship type</label>
         <select
           id="edge-filter"

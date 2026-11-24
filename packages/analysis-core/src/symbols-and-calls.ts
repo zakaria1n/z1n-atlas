@@ -76,7 +76,8 @@ export function addSymbolsAndCalls(
   project: Project,
   paths: Set<string>,
   graph: GraphParts,
-): void {
+): number {
+  let unresolvedCalls = 0;
   const declarations = new Map<string, Node>();
   for (const filePath of paths) {
     const source = project.getSourceFileOrThrow(`/workspace/${filePath}`);
@@ -187,7 +188,10 @@ export function addSymbolsAndCalls(
         .map(symbolId)
         .filter((id) => declarations.has(id));
       const unique = [...new Set(targets)];
-      if (unique.length !== 1) continue;
+      if (unique.length !== 1) {
+        unresolvedCalls++;
+        continue;
+      }
       let parent: Node | undefined = call.getParent();
       let sourceId = filePath;
       while (parent && !Node.isSourceFile(parent)) {
@@ -217,6 +221,7 @@ export function addSymbolsAndCalls(
       });
     }
   }
+  return unresolvedCalls;
 }
 
 export function resolveTarget(node: Node, graph: GraphParts): string | null {

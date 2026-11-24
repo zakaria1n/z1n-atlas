@@ -6,6 +6,7 @@ import {
   type GraphParts as Parts,
   type HttpRoute as Route,
 } from "./framework-graph";
+import type { AnalyzerFile } from "./analyze-files";
 import { addNextRoutes } from "./next-routes";
 import { ownerId, resolveTarget, symbolId, unalias } from "./symbols-and-calls";
 
@@ -62,6 +63,7 @@ function joinPath(prefix: string, route: string): string {
 export function addHttpRelationships(
   project: Project,
   paths: Set<string>,
+  files: AnalyzerFile[],
   graph: Parts,
 ): number {
   const owners = new Map<string, "app" | "router">();
@@ -111,7 +113,7 @@ export function addHttpRelationships(
       list.push({ prefix, call });
     mounts.set(target, list);
   }
-  const nextRoutes = addNextRoutes(project, paths, graph);
+  const nextRoutes = addNextRoutes(project, paths, files, graph);
   const routes: Route[] = nextRoutes.routes;
   unresolved += nextRoutes.unresolved;
   for (const call of calls) {
@@ -163,7 +165,7 @@ export function addHttpRelationships(
         path: route,
         method: pc.method.toUpperCase(),
         evidenceId,
-        mountEvidenceId: mountEvidenceId,
+        supportingEvidenceIds: mountEvidenceId ? [mountEvidenceId] : undefined,
       });
       for (const handler of args.slice(1)) {
         const target = resolveTarget(handler, graph);
@@ -254,7 +256,7 @@ export function addHttpRelationships(
       evidenceId,
       supportingEvidenceIds: [
         route.evidenceId,
-        ...(route.mountEvidenceId ? [route.mountEvidenceId] : []),
+        ...(route.supportingEvidenceIds ?? []),
       ],
     });
   }

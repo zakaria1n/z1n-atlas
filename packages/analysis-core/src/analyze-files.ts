@@ -3,6 +3,7 @@ import {
   SyntaxKind,
   type SourceFile as MorphSourceFile,
 } from "ts-morph";
+import { addNextEntrypoints } from "./next-entrypoints";
 import { addPrismaAccess } from "./prisma-access";
 import { addHttpRelationships } from "./http-relationships";
 import { addSymbolsAndCalls } from "./symbols-and-calls";
@@ -109,9 +110,18 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
         (call) => call.getExpression().getKind() === SyntaxKind.ImportKeyword,
       ).length;
   }
-  addSymbolsAndCalls(project, paths, { nodes, edges, evidence });
+  const unresolvedCalls = addSymbolsAndCalls(project, paths, {
+    nodes,
+    edges,
+    evidence,
+  });
+  unresolved += addNextEntrypoints(project, paths, files, {
+    nodes,
+    edges,
+    evidence,
+  });
   addPrismaAccess(project, paths, { nodes, edges, evidence });
-  unresolved += addHttpRelationships(project, paths, {
+  unresolved += addHttpRelationships(project, paths, files, {
     nodes,
     edges,
     evidence,
@@ -121,6 +131,7 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
     edges,
     evidence,
     unresolved,
-    notice: `Static imports, references, resolved calls, selected Express and Next.js routes, literal fetch requests and recognized Prisma access are included. HTTP matches are heuristic; static relationships are not runtime traces. Dynamic routes, dynamic URLs and dispatch may be unresolved. ${configNotice}`,
+    unresolvedCalls,
+    notice: `Static imports, references, resolved calls, Next.js page entries, selected Express and Next.js routes, literal fetch requests and recognized Prisma access are included. HTTP matches are heuristic; static relationships are not runtime traces. Dynamic routes, dynamic URLs and dispatch may be unresolved. ${configNotice}`,
   };
 }

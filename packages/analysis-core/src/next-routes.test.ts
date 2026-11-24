@@ -4,6 +4,7 @@ import { graphIsValid } from "@z1n/contracts";
 describe("Next.js App Router analysis", () => {
   it("links a static fetch to an exported route handler with source evidence", () => {
     const files = [
+      { path: "package.json", content: '{"dependencies":{"next":"16"}}' },
       {
         path: "src/client.ts",
         content: 'export function load(){return fetch("/api/users");}',
@@ -28,8 +29,20 @@ describe("Next.js App Router analysis", () => {
       ),
     ).toBe(true);
   });
+  it("does not claim Next.js routing without a verified manifest", () => {
+    const files = [
+      {
+        path: "app/api/route.ts",
+        content: "export function GET(){return null;}",
+      },
+    ];
+    const graph = analyzeFiles(files);
+    expect(graph.nodes.some((node) => node.kind === "route")).toBe(false);
+    expect(graph.unresolved).toBeGreaterThan(0);
+  });
   it("recognizes the root API endpoint", () => {
     const files = [
+      { path: "package.json", content: '{"dependencies":{"next":"16"}}' },
       {
         path: "app/api/route.ts",
         content: "export function GET(){ return null; }",
@@ -45,6 +58,7 @@ describe("Next.js App Router analysis", () => {
   });
   it("does not invent a match for dynamic route segments", () => {
     const files = [
+      { path: "package.json", content: '{"dependencies":{"next":"16"}}' },
       { path: "src/client.ts", content: 'fetch("/api/users/1")' },
       {
         path: "src/app/api/users/[id]/route.ts",

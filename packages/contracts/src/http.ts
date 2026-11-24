@@ -80,6 +80,7 @@ export const graphNodeSchema = z.object({
       "route",
       "http-call",
       "database",
+      "entrypoint",
     ])
     .optional(),
   name: z.string().optional(),
@@ -100,6 +101,7 @@ export const graphEdgeSchema = z.object({
     "http-route",
     "handles",
     "database-access",
+    "renders",
   ]),
   confidence: z.enum(["confirmed", "framework", "heuristic"]),
   evidenceId: z.string(),
@@ -110,6 +112,7 @@ export const codeGraphSchema = z.object({
   edges: z.array(graphEdgeSchema),
   evidence: z.array(graphEvidenceSchema),
   unresolved: z.number().int().nonnegative(),
+  unresolvedCalls: z.number().int().nonnegative(),
   notice: z.string(),
 });
 export const apiErrorSchema = z.object({ error: z.string() });

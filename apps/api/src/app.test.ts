@@ -8,6 +8,7 @@ vi.mock("./analyzer/run-analysis", () => ({
     edges: [],
     evidence: [],
     unresolved: 0,
+    unresolvedCalls: 0,
     notice: "No evidence.",
   })),
 }));

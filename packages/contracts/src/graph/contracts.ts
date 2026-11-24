@@ -16,7 +16,8 @@ export type GraphNode = {
     | "class"
     | "route"
     | "http-call"
-    | "database";
+    | "database"
+    | "entrypoint";
   name?: string;
   startLine?: number;
   endLine?: number;
@@ -34,7 +35,8 @@ export type GraphEdge = {
     | "requests"
     | "http-route"
     | "handles"
-    | "database-access";
+    | "database-access"
+    | "renders";
   confidence: "confirmed" | "framework" | "heuristic";
   evidenceId: string;
   supportingEvidenceIds?: string[];
@@ -44,5 +46,6 @@ export type CodeGraph = {
   edges: GraphEdge[];
   evidence: GraphEvidence[];
   unresolved: number;
+  unresolvedCalls: number;
   notice: string;
 };
