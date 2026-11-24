@@ -2,6 +2,8 @@ export * from "./graph/contracts";
 export * from "./graph/validate-graph";
 export * from "./repository/file-filter";
 export * from "./repository/limits";
+export * from "./repository/selection";
+export * from "./repository/source-text";
 export * from "./repository/github-url";
 export * from "./http";
 export * from "./providers";

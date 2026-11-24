@@ -1,7 +1,14 @@
 import { z } from "zod";
-import { isEligiblePath, MAX_SOURCE_FILE_BYTES } from "@z1n/contracts";
+import {
+  decodeSourceText,
+  isEligiblePath,
+  MAX_SOURCE_FILE_BYTES,
+  MAX_INDEX_FILES,
+  MAX_INSPECT_FILE_BYTES,
+  parseGitHubRepository,
+  selectRepositoryFiles,
+} from "@z1n/contracts";
 import type { GitHubRepository } from "@z1n/contracts";
-import { selectRepositoryFiles } from "./selection";
 
 const MAX_TREE_BYTES = 8_000_000;
 export type ImportedFile = { path: string; size: number; content: string };
@@ -9,15 +16,33 @@ export type GitHubSnapshot = {
   repository: GitHubRepository;
   commit: string;
   files: ImportedFile[];
+  inventory: { path: string; size: number }[];
+  indexTruncated: boolean;
   skipped: number;
   truncated: boolean;
 };
+export type GitHubImportErrorCode =
+  "NOT_FOUND" | "RATE_LIMIT" | "TOO_LARGE" | "UNSUPPORTED" | "UPSTREAM";
 export class GitHubImportError extends Error {
   constructor(
-    public readonly code: "NOT_FOUND" | "RATE_LIMIT" | "TOO_LARGE" | "UPSTREAM",
+    public readonly code: GitHubImportErrorCode,
     message: string,
   ) {
     super(message);
+  }
+}
+export function importErrorStatus(code: GitHubImportErrorCode): number {
+  switch (code) {
+    case "NOT_FOUND":
+      return 404;
+    case "RATE_LIMIT":
+      return 429;
+    case "TOO_LARGE":
+      return 413;
+    case "UNSUPPORTED":
+      return 415;
+    default:
+      return 502;
   }
 }
 
@@ -122,6 +147,7 @@ async function getRaw(
   path: string,
   fetcher: typeof fetch,
   signal: AbortSignal,
+  limit = MAX_SOURCE_FILE_BYTES,
 ): Promise<Buffer> {
   signal.throwIfAborted();
   const parts = [
@@ -138,7 +164,50 @@ async function getRaw(
       signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
     },
   );
-  return readResponse(response, MAX_SOURCE_FILE_BYTES, signal);
+  return readResponse(response, limit, signal);
+}
+export async function readGitHubFile(
+  repository: GitHubRepository,
+  commit: string,
+  path: string,
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<ImportedFile> {
+  const parsed = parseGitHubRepository(repository.url);
+  if (
+    !parsed ||
+    parsed.owner !== repository.owner ||
+    parsed.name !== repository.name ||
+    !/^[a-f0-9]{40}$/i.test(commit) ||
+    !isEligiblePath(path)
+  )
+    throw new GitHubImportError(
+      "NOT_FOUND",
+      "The requested file is unavailable.",
+    );
+  try {
+    const bytes = await getRaw(
+      repository,
+      commit,
+      path,
+      fetcher,
+      signal ?? AbortSignal.timeout(15_000),
+      MAX_INSPECT_FILE_BYTES,
+    );
+    const text = decodeSourceText(bytes);
+    if (!text)
+      throw new GitHubImportError(
+        "UNSUPPORTED",
+        "The requested file is not supported text.",
+      );
+    return { path, ...text };
+  } catch (error) {
+    if (error instanceof GitHubImportError) throw error;
+    throw new GitHubImportError(
+      "UPSTREAM",
+      "GitHub could not retrieve this file.",
+    );
+  }
 }
 
 export async function importGitHubRepository(
@@ -174,14 +243,19 @@ export async function importGitHubRepository(
         combined,
       ),
     );
-    const candidates = tree.tree.filter(
+    // Files above the inspection limit can be neither analyzed nor opened,
+    // so they are counted as skipped instead of being listed as inspectable.
+    const eligible = tree.tree.filter(
       (entry) =>
         entry.type === "blob" &&
         entry.mode !== "120000" &&
         entry.sha &&
         entry.size !== undefined &&
-        entry.size <= MAX_SOURCE_FILE_BYTES &&
+        entry.size <= MAX_INSPECT_FILE_BYTES &&
         isEligiblePath(entry.path),
+    );
+    const candidates = eligible.filter(
+      (entry) => entry.size! <= MAX_SOURCE_FILE_BYTES,
     );
     let skipped =
       tree.tree.filter((entry) => entry.type === "blob").length -
@@ -189,6 +263,13 @@ export async function importGitHubRepository(
     const selected = selectRepositoryFiles(
       candidates.map((entry) => ({ ...entry, size: entry.size! })),
     );
+    const indexed = new Map<string, { path: string; size: number }>();
+    for (const item of [...selected, ...eligible]) {
+      if (indexed.size >= MAX_INDEX_FILES) break;
+      if (!indexed.has(item.path))
+        indexed.set(item.path, { path: item.path, size: item.size! });
+    }
+    const inventory = [...indexed.values()];
     skipped += candidates.length - selected.length;
     const files: ImportedFile[] = [];
     for (let index = 0; index < selected.length; index += 8) {
@@ -203,16 +284,9 @@ export async function importGitHubRepository(
             fetcher,
             combined,
           );
-          if (bytes.length !== entry.size || bytes.includes(0)) return null;
-          try {
-            return {
-              path: entry.path,
-              size: bytes.length,
-              content: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-            };
-          } catch {
-            return null;
-          }
+          const text =
+            bytes.length === entry.size ? decodeSourceText(bytes) : null;
+          return text ? { path: entry.path, ...text } : null;
         }),
       );
       for (const item of results) {
@@ -220,7 +294,15 @@ export async function importGitHubRepository(
         else skipped++;
       }
     }
-    return { repository, commit, files, skipped, truncated: tree.truncated };
+    return {
+      repository,
+      commit,
+      files,
+      inventory,
+      indexTruncated: tree.truncated || eligible.length > inventory.length,
+      skipped,
+      truncated: tree.truncated,
+    };
   } catch (error) {
     if (error instanceof GitHubImportError) throw error;
     throw new GitHubImportError(

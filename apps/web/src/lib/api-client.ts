@@ -15,6 +15,8 @@ import {
   journeyIsValid,
   analysisJobStartSchema,
   analysisJobSchema,
+  githubFileRequestSchema,
+  inspectionFileSchema,
   type AnalysisRequest,
   type GitHubRepository,
   type ProviderRequest,
@@ -84,6 +86,20 @@ export async function importPublicRepository(
   );
   if (!parsed.success)
     throw new Error("The server returned an invalid repository response.");
+  return parsed.data;
+}
+export async function readPublicRepositoryFile(
+  url: string,
+  commit: string,
+  path: string,
+  signal?: AbortSignal,
+) {
+  const request = githubFileRequestSchema.parse({ url, commit, path });
+  const parsed = inspectionFileSchema.safeParse(
+    await send("/api/repositories/file", request, signal),
+  );
+  if (!parsed.success || parsed.data.path !== path)
+    throw new Error("The server returned an invalid source file.");
   return parsed.data;
 }
 export async function discoverModels(

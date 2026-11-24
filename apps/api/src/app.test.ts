@@ -20,8 +20,15 @@ vi.mock("./github/import-repository", () => ({
     repository,
     commit: "a".repeat(40),
     files: [],
+    inventory: [],
+    indexTruncated: false,
     skipped: 0,
     truncated: false,
+  })),
+  readGitHubFile: vi.fn(async (_repository, _commit, path) => ({
+    path,
+    size: 3,
+    content: "abc",
   })),
 }));
 vi.mock("./providers/discovery", () => ({
@@ -135,6 +142,60 @@ describe("analysis HTTP boundary", () => {
 });
 
 describe("repository HTTP boundary", () => {
+  it("only permits bounded public file inspection at a pinned commit", async () => {
+    const headers = { origin: "http://localhost:3000" };
+    const payload = {
+      url: "https://github.com/example/repo",
+      commit: "a".repeat(40),
+      path: "src/a.ts",
+    };
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/repositories/file",
+      headers,
+      payload: { ...payload, path: "../.env" },
+    });
+    expect(invalid.statusCode).toBe(400);
+    const valid = await app.inject({
+      method: "POST",
+      url: "/api/repositories/file",
+      headers,
+      payload,
+    });
+    expect(valid.statusCode).toBe(200);
+    expect(valid.json()).toEqual({ path: "src/a.ts", size: 3, content: "abc" });
+  });
+  it("rate-limits file inspection per process and checks the request origin", async () => {
+    const isolated = await createApp();
+    try {
+      const payload = {
+        url: "https://github.com/example/repo",
+        commit: "a".repeat(40),
+        path: "src/a.ts",
+      };
+      const url = "/api/repositories/file";
+      let status = 0;
+      for (let attempt = 0; attempt <= 60; attempt++)
+        status = (
+          await isolated.inject({
+            method: "POST",
+            url,
+            headers: { origin: "http://localhost:3000" },
+            payload,
+          })
+        ).statusCode;
+      expect(status).toBe(429);
+      const rejected = await isolated.inject({
+        method: "POST",
+        url,
+        headers: { origin: "https://hostile.example" },
+        payload,
+      });
+      expect(rejected.statusCode).toBe(403);
+    } finally {
+      await isolated.close();
+    }
+  });
   it("rejects unsafe URLs and returns a validated public snapshot", async () => {
     const headers = {
       origin: "http://localhost:3000",

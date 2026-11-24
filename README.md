@@ -2,7 +2,7 @@
 
 **Visualize. Explore. Understand.**
 
-Z1N Atlas is a read-only application for exploring source code through a relationship graph and evidence. You can import a bounded selection from a public GitHub repository or choose a local folder, browse the selected files, inspect source, and analyze supported TypeScript/JavaScript relationships.
+Z1N Atlas is a read-only application for exploring source code through a relationship graph and evidence. Import a public GitHub repository or choose a local folder to index its source paths, open any indexed file, and analyze a bounded selection of supported TypeScript/JavaScript relationships.
 
 The analyzer resolves imports, re-exports, root TypeScript path aliases, selected symbols and static calls. It also identifies supported React event attributes, Next.js page entries, literal `fetch` requests, Express routes with statically mounted routers, static Next.js App Router endpoints and selected Prisma Client operations. Framework conventions require a React import or supported project manifest; Next.js conventions require an imported package manifest declaring Next.js. HTTP matches are **heuristic**; static relations are not runtime traces. Dynamic URLs, configuration inheritance, external packages, many framework patterns, other database libraries and runtime behavior are not fully resolved. Unresolved references are reported. Settings can discover models from OpenAI, Google Gemini and Anthropic. The assistant answers individual questions with bounded evidence and clickable citations. Feature Journey ranks candidate static paths by feature or symbol names and highlights their evidence in the graph; it may select the wrong candidate or miss paths.
 
@@ -45,7 +45,7 @@ For each assistant request, the app sends the selected files to the configured b
 
 Feature Journey sends the selection to the configured backend again with consent. It can optionally send the question and relevant excerpts to the configured AI provider to help rank evidence; that option may incur charges. Every displayed transition comes from the static graph; heuristic matches and missing boundaries are identified as uncertain. Ranking uses names, optional AI-selected evidence and a bounded search rather than understanding the complete application.
 
-Imports are limited to 200 files, 256 KB per file and 5 MB total. GitHub import inventories the recursive tree and, when it exceeds these bounds, prioritizes project configuration and samples across directories; local folder selection currently takes eligible files in picker order. Coverage is partial whenever files are skipped. Common secrets, generated directories and unsupported file types are excluded by path, but filters cannot detect every secret in source content. Review your selection before sharing. GitHub and raw-content rate limits may prevent imports. Per-process request limits are not a distributed rate limiter.
+Analysis is limited to 200 files, 256 KB per file and 5 MB total. Independently of that limit, an import indexes up to 20,000 eligible paths of at most 1 MB each. GitHub import inventories the recursive tree. Local folder selection walks the chosen folder in the browser and stops with an incomplete index beyond 100,000 entries, 20 directory levels or the 20,000-path bound. When a repository exceeds the analysis bounds, both importers prioritize project configuration and sample across directories. The other indexed files remain inspectable: local files are read in the browser, and GitHub files are fetched through the backend at the pinned commit, limited to 60 requests per minute and four concurrent requests per process. Coverage is partial whenever files are skipped or the index is incomplete, and the import summary and Files panel report both. Common secrets, generated directories and unsupported file types are excluded by path, but filters cannot detect every secret in source content. Review your selection before sharing. GitHub and raw-content rate limits may prevent imports. Per-process request limits are not a distributed rate limiter.
 
 ## Checks
 
@@ -64,7 +64,7 @@ The browser smoke test starts both applications, analyzes a synthetic local proj
 ## Try it
 
 1. Start both applications, choose **Explore**, and import the public [Z1N Atlas repository](https://github.com/zakaria1n/z1n-atlas).
-2. Open the workspace and analyze the selected files. The importer reports skipped files, so the resulting map is a partial view of the repository.
+2. Open the workspace and analyze the selected files. The importer reports skipped files and whether the index is complete, so the resulting map is a partial view when files were left out. Open the Files panel to browse every indexed path; folders start collapsed, and a filter narrows the list.
 3. Choose a file or relationship to inspect its source. Switch **Graph scope** to include symbols, or enter a name under **Feature Journey** to focus on a candidate static path. Switch back to the full graph for context.
 4. Optionally select a provider and model in Settings to ask an evidence-linked question. Read the sharing notice before sending source excerpts to a provider.
 

@@ -1,9 +1,10 @@
-import type { SourceFile } from "@/features/repository-import/repository-session";
-
 export type TreeNode =
   | { kind: "directory"; name: string; path: string; children: TreeNode[] }
   | { kind: "file"; name: string; path: string };
-export function buildFileTree(files: SourceFile[], query = ""): TreeNode[] {
+export function buildFileTree(
+  files: readonly { path: string }[],
+  query = "",
+): TreeNode[] {
   const root: TreeNode[] = [];
   for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
     if (query && !file.path.toLowerCase().includes(query.trim().toLowerCase()))

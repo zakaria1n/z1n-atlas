@@ -3,7 +3,12 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRepositorySession, type SourceFile } from "./repository-session";
 import { parseGitHubRepository } from "@z1n/contracts";
-import { importPublicRepository } from "@/lib/api-client";
+import {
+  importPublicRepository,
+  readPublicRepositoryFile,
+} from "@/lib/api-client";
+import { cacheInspections } from "./inspection-cache";
+import { ANALYSIS_LIMITS, INDEX_LIMITS } from "./limits-copy";
 
 type Summary = {
   repository: { url: string };
@@ -11,6 +16,8 @@ type Summary = {
   files: SourceFile[];
   skipped: number;
   truncated: boolean;
+  inventory: { path: string; size: number }[];
+  indexTruncated: boolean;
 };
 export function GitHubImport() {
   const { setSession, beginImport } = useRepositorySession();
@@ -49,6 +56,16 @@ export function GitHubImport() {
         skipped: snapshot.skipped,
         truncated: snapshot.truncated,
         commit: snapshot.commit,
+        inventory: snapshot.inventory,
+        indexTruncated: snapshot.indexTruncated,
+        readFile: cacheInspections((path, signal) =>
+          readPublicRepositoryFile(
+            snapshot.repository.url,
+            snapshot.commit,
+            path,
+            signal,
+          ),
+        ),
       });
     } catch (error) {
       if (!isCurrent() || controller.signal.aborted) return;
@@ -58,8 +75,10 @@ export function GitHubImport() {
           : "Could not reach the server. Try again.",
       );
     } finally {
-      if (pending.current === controller) pending.current = null;
-      setBusy(false);
+      if (pending.current === controller) {
+        pending.current = null;
+        setBusy(false);
+      }
     }
   }
   return (
@@ -69,9 +88,9 @@ export function GitHubImport() {
       </div>
       <h2>Public GitHub repository</h2>
       <p>
-        Read eligible source files from a public repository default branch. Up
-        to 200 files, 256 KB per file and 5 MB total; sensitive paths and
-        generated files are excluded.
+        Read eligible source files from a public repository&apos;s default
+        branch. For analysis, {ANALYSIS_LIMITS}; {INDEX_LIMITS}. Sensitive paths
+        and generated files are excluded.
       </p>
       <form onSubmit={submit}>
         <label htmlFor="github-url">GitHub repository URL</label>
@@ -112,7 +131,12 @@ export function GitHubImport() {
           <h3>Repository read</h3>
           <p>{summary.repository.url}</p>
           <p>
-            {summary.files.length} files read · {summary.skipped} files skipped
+            {summary.files.length} files selected for analysis ·{" "}
+            {summary.skipped} files skipped
+          </p>
+          <p>
+            {summary.inventory.length} eligible paths indexed for inspection
+            {summary.indexTruncated ? "; index is incomplete" : ""}.
           </p>
           <p>
             Commit: <code>{summary.commit.slice(0, 12)}</code>
@@ -122,7 +146,11 @@ export function GitHubImport() {
               GitHub returned a truncated file tree; coverage is incomplete.
             </p>
           )}
-          <p>Source is held in memory until reload or tab closure.</p>
+          <p>
+            Source is held in memory until reload or tab closure. Opening an
+            indexed file that was not analyzed reads it from GitHub through the
+            configured backend.
+          </p>
           <Link className="text-link" href="/workspace">
             Browse imported files →
           </Link>

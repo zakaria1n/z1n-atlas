@@ -16,6 +16,9 @@ export type RepositorySession = {
   skipped: number;
   truncated: boolean;
   commit?: string;
+  inventory?: { path: string; size: number }[];
+  indexTruncated?: boolean;
+  readFile?: (path: string, signal?: AbortSignal) => Promise<SourceFile>;
 };
 type SessionContext = {
   session: RepositorySession | null;

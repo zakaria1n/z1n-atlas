@@ -18,10 +18,14 @@ import {
   graphIsValid,
   analysisJobStartSchema,
   analysisJobSchema,
+  githubFileRequestSchema,
+  inspectionFileSchema,
 } from "@z1n/contracts";
 import {
   importGitHubRepository,
+  importErrorStatus,
   GitHubImportError,
+  readGitHubFile,
 } from "./github/import-repository";
 import { createProviderAdapter } from "./providers/discovery";
 import { ProviderError } from "./providers/contracts";
@@ -78,6 +82,17 @@ export async function createApp(
   });
   let active = 0;
   const attempts: number[] = [];
+  let activeInspections = 0;
+  const inspectionAttempts: number[] = [];
+  function canInspect(): boolean {
+    const now = Date.now();
+    while (inspectionAttempts.length && inspectionAttempts[0] <= now - 60_000)
+      inspectionAttempts.shift();
+    if (activeInspections >= 4 || inspectionAttempts.length >= 60) return false;
+    inspectionAttempts.push(now);
+    activeInspections++;
+    return true;
+  }
   function canStart(): boolean {
     const now = Date.now();
     while (attempts.length && attempts[0] <= now - 60_000) attempts.shift();
@@ -87,6 +102,49 @@ export async function createApp(
     return true;
   }
   app.get("/health", async () => ({ status: "ok" }));
+  app.post(
+    "/api/repositories/file",
+    { bodyLimit: 2048 },
+    async (request, reply) => {
+      const input = githubFileRequestSchema.safeParse(request.body);
+      const repository = input.success
+        ? parseGitHubRepository(input.data.url)
+        : null;
+      if (!input.success || !repository)
+        return reply
+          .code(400)
+          .send({ error: "Invalid public repository file request." });
+      if (!canInspect())
+        return reply
+          .code(429)
+          .send({ error: "Too many file requests. Try again shortly." });
+      const abort = new AbortController();
+      const cancel = () => {
+        if (!reply.raw.writableEnded) abort.abort();
+      };
+      reply.raw.once("close", cancel);
+      try {
+        return inspectionFileSchema.parse(
+          await readGitHubFile(
+            repository,
+            input.data.commit,
+            input.data.path,
+            fetch,
+            abort.signal,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof GitHubImportError)
+          return reply
+            .code(importErrorStatus(error.code))
+            .send({ error: error.message });
+        return reply.code(502).send({ error: "Could not retrieve the file." });
+      } finally {
+        reply.raw.off("close", cancel);
+        activeInspections--;
+      }
+    },
+  );
   app.post(
     "/api/repositories/import",
     { bodyLimit: 2048 },
@@ -115,15 +173,7 @@ export async function createApp(
       } catch (error) {
         if (error instanceof GitHubImportError)
           return reply
-            .code(
-              error.code === "NOT_FOUND"
-                ? 404
-                : error.code === "RATE_LIMIT"
-                  ? 429
-                  : error.code === "TOO_LARGE"
-                    ? 413
-                    : 502,
-            )
+            .code(importErrorStatus(error.code))
             .send({ error: error.message });
         return reply.code(502).send({ error: "Import failed. Try again." });
       } finally {

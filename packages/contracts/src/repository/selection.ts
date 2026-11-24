@@ -1,4 +1,4 @@
-import { MAX_SOURCE_FILES, MAX_SOURCE_TOTAL_BYTES } from "@z1n/contracts";
+import { MAX_SOURCE_FILES, MAX_SOURCE_TOTAL_BYTES } from "./limits";
 
 type Candidate = { path: string; size: number };
 export function selectRepositoryFiles<T extends Candidate>(

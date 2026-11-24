@@ -1,6 +1,11 @@
 import { isEligiblePath } from "@z1n/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { GitHubImportError, importGitHubRepository } from "./import-repository";
+import {
+  GitHubImportError,
+  importErrorStatus,
+  importGitHubRepository,
+  readGitHubFile,
+} from "./import-repository";
 
 const repo = {
   owner: "example",
@@ -73,6 +78,8 @@ describe("GitHub importer", () => {
     ]);
     expect(snapshot.skipped).toBe(2);
     expect(snapshot.truncated).toBe(true);
+    expect(snapshot.indexTruncated).toBe(true);
+    expect(snapshot.inventory).toEqual([{ path: "src/a.ts", size: 3 }]);
     expect(snapshot.commit).toBe(sha);
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
@@ -96,6 +103,7 @@ describe("GitHub importer", () => {
     ]);
     const snapshot = await importGitHubRepository(repo, fetcher);
     expect(snapshot.files).toHaveLength(200);
+    expect(snapshot.inventory).toHaveLength(205);
     expect(snapshot.skipped).toBe(5);
     expect(fetcher).toHaveBeenCalledTimes(203);
   });
@@ -118,5 +126,81 @@ describe("GitHub importer", () => {
     await expect(importGitHubRepository(repo, fetcher)).rejects.toBeInstanceOf(
       GitHubImportError,
     );
+  });
+  it("reads a pinned public file from the fixed raw host and rejects unsafe paths", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("abc"));
+    await expect(
+      readGitHubFile(repo, sha, "src/a.ts", fetcher),
+    ).resolves.toEqual({ path: "src/a.ts", size: 3, content: "abc" });
+    expect(String(fetcher.mock.calls[0][0])).toBe(
+      `https://raw.githubusercontent.com/example/project/${sha}/src/a.ts`,
+    );
+    await expect(
+      readGitHubFile(repo, sha, "../.env", fetcher),
+    ).rejects.toBeInstanceOf(GitHubImportError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("indexes inspectable files that are too large for analysis and skips the rest", async () => {
+    const fetcher = responses([
+      { private: false, default_branch: "main" },
+      { sha },
+      {
+        truncated: false,
+        tree: [
+          { type: "blob", mode: "100644", path: "src/a.ts", size: 3, sha },
+          {
+            type: "blob",
+            mode: "100644",
+            path: "src/huge.ts",
+            size: 1_000_001,
+            sha,
+          },
+          {
+            type: "blob",
+            mode: "100644",
+            path: "src/large.ts",
+            size: 300_000,
+            sha,
+          },
+        ],
+      },
+      { encoding: "base64", size: 3, content: "YWJj" },
+    ]);
+    const snapshot = await importGitHubRepository(repo, fetcher);
+    expect(snapshot.files).toEqual([
+      { path: "src/a.ts", size: 3, content: "abc" },
+    ]);
+    expect(snapshot.inventory).toEqual([
+      { path: "src/a.ts", size: 3 },
+      { path: "src/large.ts", size: 300_000 },
+    ]);
+    expect(snapshot.skipped).toBe(2);
+    expect(snapshot.indexTruncated).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+  it("reports files that are not source text as unsupported", async () => {
+    for (const body of ["a\0b", new Uint8Array([0x66, 0x6f, 0x80])]) {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(body));
+      await expect(
+        readGitHubFile(repo, sha, "src/a.ts", fetcher),
+      ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    }
+  });
+  it("maps import failures to accurate HTTP statuses", () => {
+    expect(
+      (
+        [
+          "NOT_FOUND",
+          "RATE_LIMIT",
+          "TOO_LARGE",
+          "UNSUPPORTED",
+          "UPSTREAM",
+        ] as const
+      ).map(importErrorStatus),
+    ).toEqual([404, 429, 413, 415, 502]);
   });
 });

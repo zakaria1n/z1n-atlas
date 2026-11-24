@@ -4,6 +4,8 @@ import {
   MAX_SOURCE_FILES,
   MAX_SOURCE_FILE_BYTES,
   MAX_SOURCE_TOTAL_BYTES,
+  MAX_INDEX_FILES,
+  MAX_INSPECT_FILE_BYTES,
 } from "./repository/limits";
 
 export const repositoryUrlRequestSchema = z
@@ -58,6 +60,29 @@ export const analysisRequestSchema = z
 export const sourceFileWithSizeSchema = sourceFileSchema.extend({
   size: z.number().int().nonnegative().max(MAX_SOURCE_FILE_BYTES),
 });
+export const indexedFileSchema = z
+  .object({
+    path: z.string().min(1).max(500).refine(isEligiblePath),
+    size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict();
+export const inspectionFileSchema = z
+  .object({
+    path: z.string().min(1).max(500).refine(isEligiblePath),
+    size: z.number().int().nonnegative().max(MAX_INSPECT_FILE_BYTES),
+    content: z.string().max(MAX_INSPECT_FILE_BYTES),
+  })
+  .strict()
+  .refine(
+    (file) => new TextEncoder().encode(file.content).length === file.size,
+  );
+export const githubFileRequestSchema = z
+  .object({
+    url: z.string().max(500),
+    commit: z.string().regex(/^[a-f0-9]{40}$/i),
+    path: z.string().min(1).max(500).refine(isEligiblePath),
+  })
+  .strict();
 export const githubSnapshotSchema = z.object({
   repository: z.object({
     owner: z.string(),
@@ -66,6 +91,8 @@ export const githubSnapshotSchema = z.object({
   }),
   commit: z.string().regex(/^[a-f0-9]{40}$/i),
   files: z.array(sourceFileWithSizeSchema).max(MAX_SOURCE_FILES),
+  inventory: z.array(indexedFileSchema).max(MAX_INDEX_FILES),
+  indexTruncated: z.boolean(),
   skipped: z.number().int().nonnegative(),
   truncated: z.boolean(),
 });

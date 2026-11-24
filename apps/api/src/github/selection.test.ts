@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectRepositoryFiles } from "./selection";
+import { selectRepositoryFiles } from "@z1n/contracts";
 describe("repository selection", () => {
   it("prioritizes project configuration and distributes limited coverage across directories", () => {
     const candidates = [

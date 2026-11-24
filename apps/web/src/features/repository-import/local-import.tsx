@@ -6,10 +6,12 @@ import {
   readLocalFiles,
   selectedFiles,
   type Directory,
+  type LocalEntry,
   type LocalResult,
 } from "./local-reader";
 
 import { useRepositorySession } from "./repository-session";
+import { ANALYSIS_LIMITS, INDEX_LIMITS } from "./limits-copy";
 
 type PickerWindow = Window & {
   showDirectoryPicker?: (options: { mode: "read" }) => Promise<Directory>;
@@ -17,6 +19,8 @@ type PickerWindow = Window & {
 export function LocalImport() {
   const { setSession, beginImport } = useRepositorySession();
   const input = useRef<HTMLInputElement>(null);
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => pending.current?.abort(), []);
   const [capability, setCapability] = useState<
     "checking" | "picker" | "fallback" | "unsupported"
   >("checking");
@@ -34,24 +38,31 @@ export function LocalImport() {
     );
   }, []);
   async function read(
-    entries: AsyncIterable<{ path: string; file: () => Promise<File> }>,
+    entries: (signal: AbortSignal) => AsyncIterable<LocalEntry>,
   ) {
     const isCurrent = beginImport();
+    const controller = new AbortController();
+    pending.current = controller;
     setBusy(true);
     setError("");
     setResult(null);
     try {
-      const selection = await readLocalFiles(entries);
-      if (!isCurrent()) return;
+      const selection = await readLocalFiles(entries(controller.signal), {
+        signal: controller.signal,
+      });
+      if (!isCurrent() || controller.signal.aborted) return;
       setResult(selection);
       setSession({ label: "Local folder", origin: "local", ...selection });
     } catch {
-      if (!isCurrent()) return;
+      if (!isCurrent() || controller.signal.aborted) return;
       setError(
-        "The folder could not be read safely. Check permissions, folder depth, and size, then try again.",
+        "The folder could not be read safely. Check permissions and folder depth, then try again.",
       );
     } finally {
-      setBusy(false);
+      if (pending.current === controller) {
+        pending.current = null;
+        setBusy(false);
+      }
     }
   }
   async function choose() {
@@ -64,7 +75,7 @@ export function LocalImport() {
       const directory = await (window as PickerWindow).showDirectoryPicker!({
         mode: "read",
       });
-      await read(directoryFiles(directory));
+      await read((signal) => directoryFiles(directory, signal));
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       setError(
@@ -75,7 +86,7 @@ export function LocalImport() {
   async function fallback(event: ChangeEvent<HTMLInputElement>) {
     const element = event.currentTarget;
     const files = element.files;
-    if (files?.length) await read(selectedFiles(files));
+    if (files?.length) await read(() => selectedFiles(files));
     element.value = "";
   }
   return (
@@ -90,9 +101,10 @@ export function LocalImport() {
         after your consent. The app never writes to or runs your files.
       </p>
       <p>
-        Limits: 200 files, 256 KB per file, 5 MB total. Common secret paths,
-        generated folders, binaries and unsupported file types are excluded;
-        review your folder because filters cannot detect every secret.
+        Limits: {ANALYSIS_LIMITS} are selected for analysis; {INDEX_LIMITS}.
+        Common secret paths, generated folders, binaries and unsupported file
+        types are excluded; review your folder because filters cannot detect
+        every secret.
       </p>
       <input
         ref={input}
@@ -121,6 +133,15 @@ export function LocalImport() {
       <p aria-live="polite">
         {busy && "Reading eligible files on this device."}
       </p>
+      {busy && (
+        <button
+          type="button"
+          className="provider-clear"
+          onClick={() => pending.current?.abort()}
+        >
+          Cancel folder read
+        </button>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
@@ -130,7 +151,12 @@ export function LocalImport() {
         <div className="result" role="status">
           <h3>Folder read</h3>
           <p>
-            {result.files.length} files read · {result.skipped} files skipped
+            {result.files.length} files selected for analysis · {result.skipped}{" "}
+            files skipped
+          </p>
+          <p>
+            {result.inventory.length} eligible paths indexed for inspection
+            {result.indexTruncated ? "; index is incomplete" : ""}.
           </p>
           {result.truncated && (
             <p>Selection was limited; coverage is incomplete.</p>
