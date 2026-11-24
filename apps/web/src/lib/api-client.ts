@@ -10,11 +10,16 @@ import {
   providerTestResultSchema,
   chatRequestSchema,
   chatAnswerSchema,
+  journeyRequestSchema,
+  journeySchema,
+  journeyIsValid,
   type AnalysisRequest,
   type GitHubRepository,
   type ProviderRequest,
   type ProviderTestRequest,
   type ChatRequest,
+  type JourneyRequest,
+  type CodeGraph,
 } from "@z1n/contracts";
 
 const configured = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000";
@@ -117,6 +122,19 @@ export async function askRepository(input: ChatRequest, signal?: AbortSignal) {
       )
         throw new Error("The server returned an invalid source citation.");
     }
+  return parsed.data;
+}
+export async function requestJourney(
+  input: JourneyRequest,
+  graph: CodeGraph,
+  signal?: AbortSignal,
+) {
+  const request = journeyRequestSchema.parse(input);
+  const parsed = journeySchema.safeParse(
+    await send("/api/journeys", request, signal),
+  );
+  if (!parsed.success || !journeyIsValid(parsed.data, graph))
+    throw new Error("The server returned an invalid journey.");
   return parsed.data;
 }
 export async function analyzeRepository(

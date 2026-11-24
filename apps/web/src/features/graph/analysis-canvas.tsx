@@ -49,7 +49,10 @@ export function AnalysisCanvas({
   } catch {
     /* Address validation is reported when analysis starts. */
   }
-  if (graph) return <GraphCanvas graph={graph} onOpenFile={onOpenFile} />;
+  if (graph)
+    return (
+      <GraphCanvas graph={graph} session={session} onOpenFile={onOpenFile} />
+    );
   return (
     <div className="empty">
       <div className="empty-mark" aria-hidden="true">

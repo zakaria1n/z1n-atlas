@@ -634,6 +634,36 @@ button:disabled {
   padding: 0.35rem;
   background: white;
 }
+.graph-info:has(.journey-panel[open]) {
+  max-width: min(24rem, calc(100vw - 5rem));
+  max-height: 70%;
+}
+.journey-panel form {
+  display: grid;
+  gap: 0.5rem;
+}
+.journey-panel input:not([type="checkbox"]) {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.3rem;
+  background: white;
+  color: var(--ink);
+}
+.journey-panel .button {
+  min-height: 40px;
+  padding: 0.5rem 0.8rem;
+}
+.journey-steps {
+  padding-left: 1.3rem;
+  overflow-wrap: anywhere;
+}
+.journey-steps li {
+  margin: 0.5rem 0;
+}
+.journey-steps p {
+  margin: 0.2rem 0;
+}
 .relations {
   list-style: none;
   padding: 0;

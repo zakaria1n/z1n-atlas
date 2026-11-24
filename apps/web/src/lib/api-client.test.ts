@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { askRepository } from "./api-client";
+import { askRepository, requestJourney } from "./api-client";
 const request = {
   provider: "openai" as const,
   apiKey: "fake-key",
@@ -71,5 +71,35 @@ describe("answer citation boundary", () => {
     await expect(askRepository(request)).rejects.toThrow(
       "invalid source citation",
     );
+  });
+});
+describe("journey boundary", () => {
+  it("rejects graph references that do not exist", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              nodeIds: ["invented"],
+              edgeIds: [],
+              uncertainties: ["Partial"],
+            }),
+          ),
+      ),
+    );
+    await expect(
+      requestJourney(
+        { goal: "login", origin: "local", consent: true, files: request.files },
+        {
+          nodes: [],
+          edges: [],
+          evidence: [],
+          unresolved: 0,
+          unresolvedCalls: 0,
+          notice: "",
+        },
+      ),
+    ).rejects.toThrow("invalid journey");
   });
 });

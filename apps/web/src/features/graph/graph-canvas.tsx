@@ -9,13 +9,16 @@ import {
   type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { CodeGraph, GraphEdge } from "@z1n/contracts";
+import type { CodeGraph, GraphEdge, Journey } from "@z1n/contracts";
+import type { RepositorySession } from "@/features/repository-import/repository-session";
+import { JourneyPanel } from "./journey-panel";
 
 type Props = {
   graph: CodeGraph;
+  session: RepositorySession;
   onOpenFile: (path: string, line?: number) => void;
 };
-export function GraphCanvas({ graph, onOpenFile }: Props) {
+export function GraphCanvas({ graph, session, onOpenFile }: Props) {
   const [mobile, setMobile] = useState(false);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 700px)");
@@ -26,6 +29,7 @@ export function GraphCanvas({ graph, onOpenFile }: Props) {
   }, []);
   const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState<GraphEdge | null>(null);
+  const [journey, setJourney] = useState<Journey | null>(null);
   const byId = useMemo(
     () => new Map(graph.nodes.map((node) => [node.id, node])),
     [graph],
@@ -45,8 +49,11 @@ export function GraphCanvas({ graph, onOpenFile }: Props) {
         },
         data: { label: node.name ? `${node.name} · ${node.path}` : node.path },
         ariaLabel: `${node.kind ?? "file"}: ${node.name ?? node.path}`,
+        style: journey?.nodeIds.includes(node.id)
+          ? { border: "3px solid #c2410c", background: "#fff7ed" }
+          : undefined,
       })),
-    [graph, mobile],
+    [graph, mobile, journey],
   );
   const edges = useMemo<Edge[]>(
     () =>
@@ -57,11 +64,16 @@ export function GraphCanvas({ graph, onOpenFile }: Props) {
         label: edge.kind,
         markerEnd: { type: MarkerType.ArrowClosed },
         style: {
-          stroke: edge.confidence === "heuristic" ? "#b45309" : "#2563eb",
+          stroke: journey?.edgeIds.includes(edge.id)
+            ? "#c2410c"
+            : edge.confidence === "heuristic"
+              ? "#b45309"
+              : "#2563eb",
+          strokeWidth: journey?.edgeIds.includes(edge.id) ? 4 : 1.5,
           strokeDasharray: edge.confidence === "heuristic" ? "5 5" : undefined,
         },
       })),
-    [visible],
+    [visible, journey],
   );
   const proofs = selected
     ? [selected.evidenceId, ...(selected.supportingEvidenceIds ?? [])]
@@ -104,6 +116,16 @@ export function GraphCanvas({ graph, onOpenFile }: Props) {
           {graph.unresolved} unresolved imports or routes ·{" "}
           {graph.unresolvedCalls} unresolved calls
         </span>
+        <JourneyPanel
+          session={session}
+          graph={graph}
+          journey={journey}
+          onJourney={(value) => {
+            setJourney(value);
+            if (value) setFilter("all");
+          }}
+          onOpenFile={onOpenFile}
+        />
         <label htmlFor="edge-filter">Relationship type</label>
         <select
           id="edge-filter"
