@@ -35,7 +35,7 @@ export async function createApp(
 ): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
-    bodyLimit: 2_000_000,
+    bodyLimit: 12_000_000,
     requestTimeout: 45_000,
   });
   const analysisCache = createAnalysisCache();

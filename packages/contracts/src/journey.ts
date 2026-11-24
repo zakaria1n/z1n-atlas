@@ -2,10 +2,11 @@ import { z } from "zod";
 import { analysisRequestSchema, sourceFileSchema } from "./http";
 import { providerTestRequestSchema } from "./providers";
 import type { CodeGraph } from "./graph/contracts";
+import { MAX_SOURCE_FILES } from "./repository/limits";
 export const journeyRequestSchema = z
   .object({
     goal: z.string().trim().min(2).max(500),
-    files: z.array(sourceFileSchema).max(25),
+    files: z.array(sourceFileSchema).max(MAX_SOURCE_FILES),
     origin: z.enum(["github", "local"]),
     consent: z.boolean(),
     analysisId: z.uuid().optional(),

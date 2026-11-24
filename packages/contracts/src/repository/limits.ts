@@ -1,0 +1,3 @@
+export const MAX_SOURCE_FILES = 200;
+export const MAX_SOURCE_FILE_BYTES = 256_000;
+export const MAX_SOURCE_TOTAL_BYTES = 5_000_000;

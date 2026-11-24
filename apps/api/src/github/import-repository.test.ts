@@ -9,9 +9,17 @@ const repo = {
 };
 const sha = "a".repeat(40);
 const responses = (values: unknown[]) =>
-  vi.fn(
-    async () => new Response(JSON.stringify(values.shift()), { status: 200 }),
-  ) as unknown as typeof fetch;
+  vi.fn(async (input: string | URL | Request) => {
+    const item = values.shift();
+    if (String(input).startsWith("https://raw.githubusercontent.com/")) {
+      const data = item as { content: string };
+      return new Response(
+        Buffer.from(data.content, "base64").toString("utf8"),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify(item), { status: 200 });
+  }) as unknown as typeof fetch;
 
 describe("repository filtering", () => {
   it.each([
@@ -69,7 +77,7 @@ describe("GitHub importer", () => {
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
   it("caps a large repository and reports omitted files", async () => {
-    const entries = Array.from({ length: 30 }, (_, i) => ({
+    const entries = Array.from({ length: 205 }, (_, i) => ({
       type: "blob",
       mode: "100644",
       path: `src/file${i}.ts`,
@@ -80,16 +88,16 @@ describe("GitHub importer", () => {
       { private: false, default_branch: "main" },
       { sha },
       { truncated: false, tree: entries },
-      ...Array.from({ length: 25 }, () => ({
+      ...Array.from({ length: 200 }, () => ({
         encoding: "base64",
         size: 3,
         content: "YWJj",
       })),
     ]);
     const snapshot = await importGitHubRepository(repo, fetcher);
-    expect(snapshot.files).toHaveLength(25);
+    expect(snapshot.files).toHaveLength(200);
     expect(snapshot.skipped).toBe(5);
-    expect(fetcher).toHaveBeenCalledTimes(28);
+    expect(fetcher).toHaveBeenCalledTimes(203);
   });
   it("surfaces rate limits without returning upstream content", async () => {
     const fetcher = vi.fn(

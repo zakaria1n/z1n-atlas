@@ -70,7 +70,7 @@ export function GitHubImport() {
       <h2>Public GitHub repository</h2>
       <p>
         Read eligible source files from a public repository default branch. Up
-        to 25 files, 100 KB per file and 1 MB total; sensitive paths and
+        to 200 files, 256 KB per file and 5 MB total; sensitive paths and
         generated files are excluded.
       </p>
       <form onSubmit={submit}>

@@ -1,5 +1,10 @@
 import { z } from "zod";
 import { isEligiblePath } from "./repository/file-filter";
+import {
+  MAX_SOURCE_FILES,
+  MAX_SOURCE_FILE_BYTES,
+  MAX_SOURCE_TOTAL_BYTES,
+} from "./repository/limits";
 
 export const repositoryUrlRequestSchema = z
   .object({ url: z.string().max(500) })
@@ -7,12 +12,12 @@ export const repositoryUrlRequestSchema = z
 export const sourceFileSchema = z
   .object({
     path: z.string().min(1).max(500),
-    content: z.string().max(100_000),
+    content: z.string().max(MAX_SOURCE_FILE_BYTES),
   })
   .strict();
 export const analysisRequestSchema = z
   .object({
-    files: z.array(sourceFileSchema).max(25),
+    files: z.array(sourceFileSchema).max(MAX_SOURCE_FILES),
     origin: z.enum(["github", "local"]),
     consent: z.boolean(),
   })
@@ -31,7 +36,11 @@ export const analysisRequestSchema = z
     for (const [index, file] of files.entries()) {
       const bytes = encoder.encode(file.content).length;
       total += bytes;
-      if (!isEligiblePath(file.path) || paths.has(file.path) || bytes > 100_000)
+      if (
+        !isEligiblePath(file.path) ||
+        paths.has(file.path) ||
+        bytes > MAX_SOURCE_FILE_BYTES
+      )
         ctx.addIssue({
           code: "custom",
           message: "Invalid, duplicate, or oversized source file.",
@@ -39,7 +48,7 @@ export const analysisRequestSchema = z
         });
       paths.add(file.path);
     }
-    if (total > 1_000_000)
+    if (total > MAX_SOURCE_TOTAL_BYTES)
       ctx.addIssue({
         code: "custom",
         message: "Source selection exceeds the total limit.",
@@ -47,7 +56,7 @@ export const analysisRequestSchema = z
       });
   });
 export const sourceFileWithSizeSchema = sourceFileSchema.extend({
-  size: z.number().int().nonnegative().max(100_000),
+  size: z.number().int().nonnegative().max(MAX_SOURCE_FILE_BYTES),
 });
 export const githubSnapshotSchema = z.object({
   repository: z.object({
@@ -56,7 +65,7 @@ export const githubSnapshotSchema = z.object({
     url: z.string(),
   }),
   commit: z.string().regex(/^[a-f0-9]{40}$/i),
-  files: z.array(sourceFileWithSizeSchema).max(25),
+  files: z.array(sourceFileWithSizeSchema).max(MAX_SOURCE_FILES),
   skipped: z.number().int().nonnegative(),
   truncated: z.boolean(),
 });

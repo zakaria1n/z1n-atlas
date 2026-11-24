@@ -1,4 +1,9 @@
-import { isEligiblePath } from "@z1n/contracts";
+import {
+  isEligiblePath,
+  MAX_SOURCE_FILES,
+  MAX_SOURCE_FILE_BYTES,
+  MAX_SOURCE_TOTAL_BYTES,
+} from "@z1n/contracts";
 
 export type LocalFile = { path: string; size: number; content: string };
 export type LocalResult = {
@@ -12,9 +17,9 @@ type Entry =
 export type Directory = Extract<Entry, { kind: "directory" }>;
 const MAX_ENTRIES = 5000;
 const MAX_DEPTH = 20;
-const MAX_FILES = 25;
-const MAX_BYTES = 100_000;
-const MAX_TOTAL = 1_000_000;
+const MAX_FILES = MAX_SOURCE_FILES;
+const MAX_BYTES = MAX_SOURCE_FILE_BYTES;
+const MAX_TOTAL = MAX_SOURCE_TOTAL_BYTES;
 
 export async function readLocalFiles(
   entries: AsyncIterable<{ path: string; file: () => Promise<File> }>,

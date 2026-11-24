@@ -45,7 +45,7 @@ For each assistant request, the app sends the selected files to the configured b
 
 Feature Journey sends the selection to the configured backend again with consent. It can optionally send the question and relevant excerpts to the configured AI provider to help rank evidence; that option may incur charges. Every displayed transition comes from the static graph; heuristic matches and missing boundaries are identified as uncertain. Ranking uses names, optional AI-selected evidence and a bounded search rather than understanding the complete application.
 
-Imports are limited to 25 files, 100 KB per file and 1 MB total. Common secrets, generated directories and unsupported file types are excluded by path, but filters cannot detect every secret in source content. Review your selection before sharing. GitHub API rate limits may prevent imports. Per-process request limits are not a distributed rate limiter.
+Imports are limited to 200 files, 256 KB per file and 5 MB total. GitHub import inventories the recursive tree and, when it exceeds these bounds, prioritizes project configuration and samples across directories; local folder selection currently takes eligible files in picker order. Coverage is partial whenever files are skipped. Common secrets, generated directories and unsupported file types are excluded by path, but filters cannot detect every secret in source content. Review your selection before sharing. GitHub and raw-content rate limits may prevent imports. Per-process request limits are not a distributed rate limiter.
 
 ## Checks
 

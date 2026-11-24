@@ -90,7 +90,7 @@ export function LocalImport() {
         after your consent. The app never writes to or runs your files.
       </p>
       <p>
-        Limits: 25 files, 100 KB per file, 1 MB total. Common secret paths,
+        Limits: 200 files, 256 KB per file, 5 MB total. Common secret paths,
         generated folders, binaries and unsupported file types are excluded;
         review your folder because filters cannot detect every secret.
       </p>

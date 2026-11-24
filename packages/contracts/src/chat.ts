@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { analysisRequestSchema, sourceFileSchema } from "./http";
 import { providerTestRequestSchema } from "./providers";
+import { MAX_SOURCE_FILES } from "./repository/limits";
 export const chatRequestSchema = providerTestRequestSchema
   .extend({
     question: z.string().trim().min(2).max(1000),
-    files: z.array(sourceFileSchema).max(25),
+    files: z.array(sourceFileSchema).max(MAX_SOURCE_FILES),
     origin: z.enum(["github", "local"]),
     consent: z.boolean(),
     providerConsent: z.literal(true),

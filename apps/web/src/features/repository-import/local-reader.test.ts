@@ -33,18 +33,18 @@ describe("local source selection", () => {
   it("caps selection and marks incomplete coverage", async () => {
     const result = await readLocalFiles(
       source(
-        Array.from({ length: 30 }, (_, index) =>
+        Array.from({ length: 205 }, (_, index) =>
           make(`src/file${index}.ts`, "ok"),
         ),
       ),
     );
-    expect(result.files).toHaveLength(25);
+    expect(result.files).toHaveLength(200);
     expect(result.skipped).toBe(5);
     expect(result.truncated).toBe(true);
   });
   it("excludes oversized and binary source", async () => {
     const result = await readLocalFiles(
-      source([make("large.ts", "x".repeat(100001)), make("binary.ts", "a\0b")]),
+      source([make("large.ts", "x".repeat(256001)), make("binary.ts", "a\0b")]),
     );
     expect(result.files).toHaveLength(0);
     expect(result.skipped).toBe(2);

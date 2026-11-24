@@ -7,6 +7,7 @@ const excludedName =
 export function isEligiblePath(path: string): boolean {
   const parts = path.split("/");
   return (
+    path.length <= 500 &&
     parts.length > 0 &&
     parts.every(
       (part) =>
