@@ -11,6 +11,8 @@ import {
   modelListSchema,
   providerTestRequestSchema,
   providerTestResultSchema,
+  chatRequestSchema,
+  chatAnswerSchema,
 } from "@z1n/contracts";
 import {
   importGitHubRepository,
@@ -19,6 +21,8 @@ import {
 import { createProviderAdapter } from "./providers/discovery";
 import { ProviderError } from "./providers/contracts";
 import { testModel } from "./providers/test-model";
+import { generateAnswer } from "./providers/generate-answer";
+import { answerQuestion } from "./evidence/answer";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 
 export async function createApp(
@@ -27,7 +31,7 @@ export async function createApp(
   const app = Fastify({
     logger: false,
     bodyLimit: 2_000_000,
-    requestTimeout: 20_000,
+    requestTimeout: 45_000,
   });
   await app.register(cors, {
     origin: webOrigin,
@@ -205,6 +209,48 @@ export async function createApp(
       }
     },
   );
+  app.post("/api/chat", async (request, reply) => {
+    const input = chatRequestSchema.safeParse(request.body);
+    if (!input.success)
+      return reply
+        .code(400)
+        .send({ error: "Invalid request or missing source-sharing consent." });
+    if (!canStart())
+      return reply
+        .code(429)
+        .send({ error: "Service is busy. Try again shortly." });
+    const abort = new AbortController();
+    const cancel = () => {
+      if (!reply.raw.writableEnded) abort.abort();
+    };
+    reply.raw.once("close", cancel);
+    try {
+      const graph = await runAnalysis(input.data.files, 15_000, abort.signal);
+      const { provider, apiKey, model, question, files } = input.data;
+      const answer = await answerQuestion(question, files, graph, (context) =>
+        generateAnswer({ provider, apiKey, model }, context, abort.signal),
+      );
+      return chatAnswerSchema.parse(answer);
+    } catch (error) {
+      if (error instanceof ProviderError) {
+        const status =
+          error.code === "INVALID_KEY"
+            ? 401
+            : error.code === "FORBIDDEN"
+              ? 403
+              : error.code === "RATE_LIMIT"
+                ? 429
+                : 502;
+        return reply.code(status).send({ error: error.message });
+      }
+      return reply
+        .code(502)
+        .send({ error: "The answer could not be generated. Try again." });
+    } finally {
+      reply.raw.off("close", cancel);
+      active--;
+    }
+  });
   app.setErrorHandler((error, _request, reply) => {
     const candidate =
       error && typeof error === "object" && "statusCode" in error

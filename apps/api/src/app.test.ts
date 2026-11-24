@@ -34,6 +34,17 @@ vi.mock("./providers/discovery", () => ({
 vi.mock("./providers/test-model", () => ({
   testModel: vi.fn(async () => undefined),
 }));
+vi.mock("./providers/generate-answer", () => ({
+  generateAnswer: vi.fn(async (_input, context) => ({
+    claims: [
+      {
+        text: "The source mentions login.",
+        evidenceIds: [context.evidence[0].id],
+      },
+    ],
+    uncertainties: [],
+  })),
+}));
 let app: FastifyInstance;
 beforeAll(async () => {
   app = await createApp();
@@ -153,5 +164,68 @@ describe("provider HTTP boundary", () => {
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.body).not.toContain("test-key");
     expect(response.json().models[0].id).toBe("model-a");
+  });
+});
+
+describe("chat HTTP boundary", () => {
+  it("returns citations drawn from server-selected source", async () => {
+    const isolated = await createApp();
+    try {
+      const response = await isolated.inject({
+        method: "POST",
+        url: "/api/chat",
+        headers: { origin: "http://localhost:3000" },
+        payload: {
+          provider: "openai",
+          apiKey: "fake-key",
+          model: "demo",
+          question: "Where is login?",
+          files: [{ path: "a.ts", content: "export const login = 1;" }],
+          origin: "local",
+          consent: true,
+          providerConsent: true,
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().claims[0].citations[0]).toMatchObject({
+        filePath: "a.ts",
+        startLine: 1,
+      });
+      expect(response.body).not.toContain("fake-key");
+    } finally {
+      await isolated.close();
+    }
+  });
+  it("requires provider consent and abstains without matching evidence", async () => {
+    const headers = {
+      origin: "http://localhost:3000",
+      "content-type": "application/json",
+    };
+    const payload = {
+      provider: "openai",
+      apiKey: "fake-key",
+      model: "demo",
+      question: "Where is payment?",
+      files: [{ path: "a.ts", content: "export const x = 1;" }],
+      origin: "local",
+      consent: true,
+      providerConsent: false,
+    };
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      headers,
+      payload,
+    });
+    expect(invalid.statusCode).toBe(400);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      headers,
+      payload: { ...payload, providerConsent: true },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().claims).toEqual([]);
+    expect(response.body).not.toContain("fake-key");
   });
 });

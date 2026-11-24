@@ -1,4 +1,28 @@
 import { z } from "zod";
+import { analysisRequestSchema, sourceFileSchema } from "./http";
+import { providerTestRequestSchema } from "./providers";
+export const chatRequestSchema = providerTestRequestSchema
+  .extend({
+    question: z.string().trim().min(2).max(1000),
+    files: z.array(sourceFileSchema).max(25),
+    origin: z.enum(["github", "local"]),
+    consent: z.boolean(),
+    providerConsent: z.literal(true),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      !analysisRequestSchema.safeParse({
+        files: value.files,
+        origin: value.origin,
+        consent: value.consent,
+      }).success
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Invalid source selection or missing consent.",
+      });
+  });
+export type ChatRequest = z.infer<typeof chatRequestSchema>;
 export const citationSchema = z
   .object({
     id: z.string().min(1).max(2000),
