@@ -51,6 +51,7 @@ export function JourneyPanel({
           goal,
           origin: session.origin,
           consent: true,
+          analysisId: graph.analysisId,
           files: session.files.map(({ path, content }) => ({ path, content })),
           ...(useAi
             ? {

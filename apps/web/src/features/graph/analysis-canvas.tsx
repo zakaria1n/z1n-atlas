@@ -1,7 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import type { CodeGraph } from "@z1n/contracts";
-import type { RepositorySession } from "@/features/repository-import/repository-session";
+import {
+  useRepositorySession,
+  type RepositorySession,
+} from "@/features/repository-import/repository-session";
 import { analyzeRepository, apiOrigin } from "@/lib/api-client";
 import { GraphCanvas } from "./graph-canvas";
 
@@ -12,6 +15,7 @@ export function AnalysisCanvas({
   session: RepositorySession;
   onOpenFile: (path: string, line?: number) => void;
 }) {
+  const { setAnalysisId } = useRepositorySession();
   const [graph, setGraph] = useState<CodeGraph | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -35,6 +39,7 @@ export function AnalysisCanvas({
         controller.signal,
       );
       setGraph(result);
+      setAnalysisId(result.analysisId);
     } catch (error) {
       if (!controller.signal.aborted)
         setError(error instanceof Error ? error.message : "Analysis failed.");

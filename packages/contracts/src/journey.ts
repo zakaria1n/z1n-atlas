@@ -8,6 +8,7 @@ export const journeyRequestSchema = z
     files: z.array(sourceFileSchema).max(25),
     origin: z.enum(["github", "local"]),
     consent: z.boolean(),
+    analysisId: z.uuid().optional(),
     ai: providerTestRequestSchema
       .extend({ providerConsent: z.literal(true) })
       .optional(),

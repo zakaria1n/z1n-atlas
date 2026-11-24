@@ -28,6 +28,7 @@ import { generateAnswer } from "./providers/generate-answer";
 import { answerQuestion } from "./evidence/answer";
 import { findJourney } from "./journey/find-journey";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
+import { createAnalysisCache } from "./analyzer/analysis-cache";
 
 export async function createApp(
   webOrigin = "http://localhost:3000",
@@ -36,6 +37,10 @@ export async function createApp(
     logger: false,
     bodyLimit: 2_000_000,
     requestTimeout: 45_000,
+  });
+  const analysisCache = createAnalysisCache();
+  app.addHook("onClose", async () => {
+    analysisCache.clear();
   });
   await app.register(cors, {
     origin: webOrigin,
@@ -121,8 +126,13 @@ export async function createApp(
     };
     reply.raw.once("close", cancel);
     try {
-      const graph = await runAnalysis(input.data.files, 15_000, abort.signal);
-      return codeGraphSchema.parse(graph);
+      const graph = codeGraphSchema.parse(
+        await runAnalysis(input.data.files, 15_000, abort.signal),
+      );
+      if (!graphIsValid(graph, input.data.files))
+        throw new AnalysisError("Analysis returned invalid evidence.");
+      const analysisId = analysisCache.put(input.data.files, graph);
+      return codeGraphSchema.parse({ ...graph, analysisId });
     } catch (error) {
       return reply.code(500).send({
         error:
@@ -235,7 +245,9 @@ export async function createApp(
     };
     reply.raw.once("close", cancel);
     try {
-      const graph = await runAnalysis(input.data.files, 15_000, abort.signal);
+      const graph =
+        analysisCache.get(input.data.analysisId, input.data.files) ??
+        (await runAnalysis(input.data.files, 15_000, abort.signal));
       const { provider, apiKey, model, question, files } = input.data;
       const answer = await answerQuestion(question, files, graph, (context) =>
         generateAnswer({ provider, apiKey, model }, context, abort.signal),
@@ -278,7 +290,8 @@ export async function createApp(
     reply.raw.once("close", cancel);
     try {
       const graph = codeGraphSchema.parse(
-        await runAnalysis(input.data.files, 15_000, abort.signal),
+        analysisCache.get(input.data.analysisId, input.data.files) ??
+          (await runAnalysis(input.data.files, 15_000, abort.signal)),
       );
       if (!graphIsValid(graph, input.data.files))
         throw new Error("Invalid graph.");

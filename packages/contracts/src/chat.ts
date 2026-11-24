@@ -8,6 +8,7 @@ export const chatRequestSchema = providerTestRequestSchema
     origin: z.enum(["github", "local"]),
     consent: z.boolean(),
     providerConsent: z.literal(true),
+    analysisId: z.uuid().optional(),
   })
   .superRefine((value, ctx) => {
     if (

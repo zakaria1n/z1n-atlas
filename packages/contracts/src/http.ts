@@ -108,6 +108,7 @@ export const graphEdgeSchema = z.object({
   supportingEvidenceIds: z.array(z.string()).optional(),
 });
 export const codeGraphSchema = z.object({
+  analysisId: z.uuid().optional(),
   nodes: z.array(graphNodeSchema),
   edges: z.array(graphEdgeSchema),
   evidence: z.array(graphEvidenceSchema),

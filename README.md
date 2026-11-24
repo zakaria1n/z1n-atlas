@@ -13,7 +13,7 @@ The analyzer resolves imports, re-exports, root TypeScript path aliases, selecte
 - `packages/contracts`: shared Zod HTTP schemas and evidence validation.
 - `packages/analysis-core`: TypeScript/JavaScript analysis using ts-morph and the TypeScript compiler.
 
-Analysis runs in a Node worker with a timeout and heap limit; the application does not execute or modify imported source. Source and graph results are kept in memory, not a database. Worker heap limits do not replace deployment-level resource limits.
+Analysis runs in a Node worker with a timeout and heap limit; the application does not execute or modify imported source. Results may be cached in backend memory for up to five minutes, with at most four graphs and a 4 MB limit per graph. Cache entries contain graph evidence snippets, but not the complete submitted file list or provider keys. Worker heap limits do not replace deployment-level resource limits.
 
 ## Run locally
 
@@ -41,7 +41,7 @@ Local selection is read in the browser. Before analysis the app displays the con
 
 Provider keys are held in browser memory for the current tab and sent to the configured backend when requesting a model list or testing a model, then forwarded to the selected provider. They are not persisted by the application. Model discovery does not verify generation access, and listings may be incomplete. The optional test sends a short generation request that may incur provider charges. Provider integration is tested with mocks; live credentials have not been used to verify it.
 
-For each assistant request, the app sends the selected files to the configured backend for analysis and bounded relevant excerpts to the selected AI provider after consent. Providers may retain submitted data according to their own policies. Only citations found in the analyzed selection are accepted, but a valid citation does not guarantee that the model's explanation is correct. The assistant can miss relevant evidence and is not a runtime trace. Requests may incur provider charges.
+For each assistant request, the app sends the selected files to the configured backend and bounded relevant excerpts to the selected AI provider after consent. The backend reuses an unexpired matching analysis when available, and otherwise analyzes the selection again. Providers may retain submitted data according to their own policies. Only citations found in the analyzed selection are accepted, but a valid citation does not guarantee that the model's explanation is correct. The assistant can miss relevant evidence and is not a runtime trace. Requests may incur provider charges.
 
 Feature Journey sends the selection to the configured backend again with consent. It can optionally send the question and relevant excerpts to the configured AI provider to help rank evidence; that option may incur charges. Every displayed transition comes from the static graph; heuristic matches and missing boundaries are identified as uncertain. Ranking uses names, optional AI-selected evidence and a bounded search rather than understanding the complete application.
 

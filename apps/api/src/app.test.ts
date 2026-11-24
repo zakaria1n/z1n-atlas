@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createApp } from "./app";
 import { generateAnswer } from "./providers/generate-answer";
+import { runAnalysis } from "./analyzer/run-analysis";
 vi.mock("./analyzer/run-analysis", () => ({
   AnalysisError: class extends Error {},
   runAnalysis: vi.fn(async () => ({
@@ -231,6 +232,69 @@ describe("chat HTTP boundary", () => {
   });
 });
 describe("journey HTTP boundary", () => {
+  it("reuses only the matching analysis for subsequent journey and chat requests", async () => {
+    vi.mocked(runAnalysis).mockClear();
+    const isolated = await createApp();
+    try {
+      const headers = { origin: "http://localhost:3000" };
+      const files = [{ path: "a.ts", content: "export function login() {}" }];
+      const analysis = await isolated.inject({
+        method: "POST",
+        url: "/api/analysis",
+        headers,
+        payload: { files, origin: "local", consent: true },
+      });
+      expect(analysis.statusCode).toBe(200);
+      const analysisId: string = analysis.json().analysisId;
+      const journey = await isolated.inject({
+        method: "POST",
+        url: "/api/journeys",
+        headers,
+        payload: {
+          files,
+          origin: "local",
+          consent: true,
+          goal: "login",
+          analysisId,
+        },
+      });
+      expect(journey.statusCode).toBe(200);
+      const chat = await isolated.inject({
+        method: "POST",
+        url: "/api/chat",
+        headers,
+        payload: {
+          files,
+          origin: "local",
+          consent: true,
+          providerConsent: true,
+          provider: "openai",
+          apiKey: "fake-key",
+          model: "demo",
+          question: "login",
+          analysisId,
+        },
+      });
+      expect(chat.statusCode).toBe(200);
+      expect(runAnalysis).toHaveBeenCalledTimes(1);
+      const changed = await isolated.inject({
+        method: "POST",
+        url: "/api/journeys",
+        headers,
+        payload: {
+          files: [{ path: "a.ts", content: "changed" }],
+          origin: "local",
+          consent: true,
+          goal: "login",
+          analysisId,
+        },
+      });
+      expect(changed.statusCode).toBe(200);
+      expect(runAnalysis).toHaveBeenCalledTimes(2);
+    } finally {
+      await isolated.close();
+    }
+  });
   it("requires consent before AI evidence selection", async () => {
     vi.mocked(generateAnswer).mockClear();
     const isolated = await createApp();

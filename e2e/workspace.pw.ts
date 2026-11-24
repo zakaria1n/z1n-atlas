@@ -95,7 +95,15 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
       "I agree to send these local files to this backend for analysis.",
     )
     .check();
+  const analysisResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/analysis") &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Send and analyze" }).click();
+  const analysisId = (await (await analysisResponse).json())
+    .analysisId as string;
+  expect(analysisId).toBeTruthy();
   await expect(
     page.getByRole("region", { name: "Source relationship graph" }),
   ).toBeVisible();
@@ -106,7 +114,12 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   ).toBeVisible();
   await page.getByLabel("Feature or symbol").fill("user registration");
   await page.getByLabel(/Send the selected files again/).check();
+  const journeyRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/journeys") && request.method() === "POST",
+  );
   await page.getByRole("button", { name: "Find path" }).click();
+  expect((await journeyRequest).postDataJSON().analysisId).toBe(analysisId);
   await expect(page.getByLabel("Graph scope")).toHaveValue("all");
   await expect(page.locator(".journey-steps > li")).toHaveCount(8);
   expect(
@@ -129,7 +142,12 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   await page.getByRole("button", { name: "Open AI assistant" }).click();
   await page.getByLabel("Your question").fill("Where is the form?");
   await page.getByLabel(/I agree to send the selected files/).check();
+  const chatRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/chat") && request.method() === "POST",
+  );
   await page.getByRole("button", { name: "Ask", exact: true }).click();
+  expect((await chatRequest).postDataJSON().analysisId).toBe(analysisId);
   await expect(page.getByText("The form calls createUser.")).toBeVisible();
   await page
     .getByRole("dialog", { name: "AI assistant" })

@@ -42,6 +42,7 @@ export type GraphEdge = {
   supportingEvidenceIds?: string[];
 };
 export type CodeGraph = {
+  analysisId?: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
   evidence: GraphEvidence[];

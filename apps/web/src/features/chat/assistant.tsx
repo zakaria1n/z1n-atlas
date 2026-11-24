@@ -3,7 +3,10 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatAnswer } from "@z1n/contracts";
 import { useProviderSession } from "@/features/provider-settings/provider-session";
-import type { RepositorySession } from "@/features/repository-import/repository-session";
+import {
+  useRepositorySession,
+  type RepositorySession,
+} from "@/features/repository-import/repository-session";
 import { apiOriginLabel, askRepository } from "@/lib/api-client";
 
 export function Assistant({
@@ -14,6 +17,7 @@ export function Assistant({
   onOpenCitation: (path: string, line: number) => void;
 }) {
   const { session: provider } = useProviderSession();
+  const { analysisId } = useRepositorySession();
   const [question, setQuestion] = useState("");
   const [consent, setConsent] = useState(false);
   const [answer, setAnswer] = useState<ChatAnswer | null>(null);
@@ -46,6 +50,7 @@ export function Assistant({
           origin: session.origin,
           consent: true,
           providerConsent: true,
+          analysisId,
         },
         controller.signal,
       );
