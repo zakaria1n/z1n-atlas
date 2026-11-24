@@ -6,9 +6,12 @@ import {
   graphIsValid,
   providerRequestSchema,
   modelListSchema,
+  providerTestRequestSchema,
+  providerTestResultSchema,
   type AnalysisRequest,
   type GitHubRepository,
   type ProviderRequest,
+  type ProviderTestRequest,
 } from "@z1n/contracts";
 
 const configured = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000";
@@ -72,6 +75,18 @@ export async function discoverModels(
   );
   if (!parsed.success)
     throw new Error("The server returned an invalid model list.");
+  return parsed.data;
+}
+export async function testProviderModel(
+  input: ProviderTestRequest,
+  signal?: AbortSignal,
+) {
+  const request = providerTestRequestSchema.parse(input);
+  const parsed = providerTestResultSchema.safeParse(
+    await send("/api/providers/test", request, signal),
+  );
+  if (!parsed.success)
+    throw new Error("The server returned an invalid test response.");
   return parsed.data;
 }
 export async function analyzeRepository(

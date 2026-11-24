@@ -4,6 +4,7 @@ export async function providerJson(
   headers: Record<string, string>,
   fetcher: typeof fetch,
   signal?: AbortSignal,
+  body?: unknown,
 ): Promise<unknown> {
   try {
     const timeout = AbortSignal.timeout(12_000);
@@ -13,6 +14,9 @@ export async function providerJson(
       redirect: "error",
       cache: "no-store",
       signal: combined,
+      ...(body === undefined
+        ? {}
+        : { method: "POST", body: JSON.stringify(body) }),
     });
     if (!response.ok) throw providerErrorForStatus(response.status);
     const reader = response.body?.getReader();

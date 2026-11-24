@@ -39,7 +39,7 @@ To use a different backend, set `NEXT_PUBLIC_API_URL` in `apps/web/.env.local` b
 
 Local selection is read in the browser. Before analysis the app displays the configured backend address and asks for explicit consent to send selected local files; a remote backend receives their contents. Browser selection does not grant the server filesystem access. The server processes the submitted contents in memory, without running project code. The selection is discarded on reload or tab closure.
 
-Provider keys are held in browser memory for the current tab and sent to the configured backend when requesting a model list, then forwarded to the selected provider. They are not persisted by the application. Model discovery does not verify generation access, and listings may be incomplete. Provider integration is tested with mocks; live credentials have not been used to verify it.
+Provider keys are held in browser memory for the current tab and sent to the configured backend when requesting a model list or testing a model, then forwarded to the selected provider. They are not persisted by the application. Model discovery does not verify generation access, and listings may be incomplete. The optional test sends a short generation request that may incur provider charges. Provider integration is tested with mocks; live credentials have not been used to verify it.
 
 Imports are limited to 25 files, 100 KB per file and 1 MB total. Common secrets, generated directories and unsupported file types are excluded by path, but filters cannot detect every secret in source content. Review your selection before sharing. GitHub API rate limits may prevent imports. Per-process request limits are not a distributed rate limiter.
 

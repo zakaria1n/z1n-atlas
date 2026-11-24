@@ -31,6 +31,9 @@ vi.mock("./providers/discovery", () => ({
     })),
   }),
 }));
+vi.mock("./providers/test-model", () => ({
+  testModel: vi.fn(async () => undefined),
+}));
 let app: FastifyInstance;
 beforeAll(async () => {
   app = await createApp();
@@ -106,6 +109,28 @@ describe("repository HTTP boundary", () => {
 });
 
 describe("provider HTTP boundary", () => {
+  it("validates model checks and returns no key", async () => {
+    const headers = {
+      origin: "http://localhost:3000",
+      "content-type": "application/json",
+    };
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/providers/test",
+      headers,
+      payload: { provider: "google", apiKey: "fake-key", model: "../bad" },
+    });
+    expect(invalid.statusCode).toBe(400);
+    const valid = await app.inject({
+      method: "POST",
+      url: "/api/providers/test",
+      headers,
+      payload: { provider: "google", apiKey: "fake-key", model: "demo" },
+    });
+    expect(valid.statusCode).toBe(200);
+    expect(valid.json()).toEqual({ ok: true });
+    expect(valid.body).not.toContain("fake-key");
+  });
   it("rejects missing keys and returns only normalized discovery data", async () => {
     const headers = {
       origin: "http://localhost:3000",

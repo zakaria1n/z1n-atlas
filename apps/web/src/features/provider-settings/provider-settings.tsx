@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { providerRequestSchema, type Provider } from "@z1n/contracts";
-import { apiOrigin, discoverModels } from "@/lib/api-client";
+import { apiOrigin, discoverModels, testProviderModel } from "@/lib/api-client";
 import { useProviderSession } from "./provider-session";
 
 export function ProviderSettings() {
@@ -57,6 +57,35 @@ export function ProviderSettings() {
       }
     }
   }
+  async function testConnection() {
+    pending.current?.abort();
+    const controller = new AbortController();
+    pending.current = controller;
+    setLoading(true);
+    setMessage("");
+    try {
+      await testProviderModel(
+        {
+          provider: session.provider,
+          apiKey: session.apiKey,
+          model: session.model,
+        },
+        controller.signal,
+      );
+      if (pending.current === controller)
+        setMessage("The selected model returned text successfully.");
+    } catch (error) {
+      if (pending.current === controller)
+        setMessage(
+          error instanceof Error ? error.message : "Model test failed.",
+        );
+    } finally {
+      if (pending.current === controller) {
+        pending.current = null;
+        setLoading(false);
+      }
+    }
+  }
   return (
     <section className="provider-settings" aria-labelledby="provider-heading">
       <div>
@@ -68,8 +97,9 @@ export function ProviderSettings() {
           and forwarded to the selected provider.
         </p>
         <p>
-          Model discovery checks the list only; it does not verify that
-          generation works. AI chat and Feature Journey are not yet available.
+          Model discovery checks the list only. Testing a model sends a short
+          generation request that may incur provider charges. AI chat and
+          Feature Journey are not yet available.
         </p>
       </div>
       <form onSubmit={submit}>
@@ -99,7 +129,7 @@ export function ProviderSettings() {
             disabled={loading || !session.apiKey}
             type="submit"
           >
-            {loading ? "Retrieving models…" : "Retrieve models"}
+            {loading ? "Working…" : "Retrieve models"}
           </button>
           <button
             className="provider-clear"
@@ -118,9 +148,11 @@ export function ProviderSettings() {
             <select
               id="model"
               value={session.model}
-              onChange={(event) =>
-                setSession({ ...session, model: event.target.value })
-              }
+              disabled={loading}
+              onChange={(event) => {
+                setMessage("");
+                setSession({ ...session, model: event.target.value });
+              }}
             >
               <option value="">Select a model</option>
               {session.list.models.map((model) => (
@@ -134,6 +166,14 @@ export function ProviderSettings() {
               {session.list.partial &&
                 " This list is incomplete; the provider has more results."}
             </p>
+            <button
+              className="button provider-submit"
+              type="button"
+              disabled={loading || !session.model}
+              onClick={testConnection}
+            >
+              Test selected model
+            </button>
           </>
         )}
       </form>

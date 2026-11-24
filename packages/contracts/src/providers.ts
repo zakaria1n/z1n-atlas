@@ -24,7 +24,18 @@ export const modelListSchema = z
     notice: z.string().max(500),
   })
   .strict();
+export const providerTestRequestSchema = providerRequestSchema.extend({
+  model: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[a-zA-Z0-9._:-]+$/),
+});
+export const providerTestResultSchema = z
+  .object({ ok: z.literal(true) })
+  .strict();
 export type Provider = z.infer<typeof providerSchema>;
 export type ProviderRequest = z.infer<typeof providerRequestSchema>;
 export type Model = z.infer<typeof modelSchema>;
 export type ModelList = z.infer<typeof modelListSchema>;
+export type ProviderTestRequest = z.infer<typeof providerTestRequestSchema>;
