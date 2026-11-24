@@ -33,7 +33,13 @@ function exportedNames(source: MorphSourceFile): string[] {
       }
   return [...new Set(names)].sort();
 }
-export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
+export type AnalysisStage =
+  "parsing" | "imports" | "symbols" | "frameworks" | "validating";
+export function analyzeFiles(
+  files: AnalyzerFile[],
+  progress?: (stage: AnalysisStage) => void,
+): CodeGraph {
+  progress?.("parsing");
   const scripts = files.filter((file) => script.test(file.path));
   const { options, configNotice } = compilerOptions(files);
   const project = new Project({
@@ -54,6 +60,7 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
       project.getSourceFileOrThrow(`/workspace/${file.path}`),
     ),
   }));
+  progress?.("imports");
   for (const file of scripts) {
     const source = project.getSourceFileOrThrow(`/workspace/${file.path}`);
     const relations = [
@@ -111,11 +118,13 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
         (call) => call.getExpression().getKind() === SyntaxKind.ImportKeyword,
       ).length;
   }
+  progress?.("symbols");
   const unresolvedCalls = addSymbolsAndCalls(project, paths, {
     nodes,
     edges,
     evidence,
   });
+  progress?.("frameworks");
   addReactEvents(project, paths, { nodes, edges, evidence }, files);
   unresolved += addNextEntrypoints(project, paths, files, {
     nodes,

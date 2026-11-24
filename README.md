@@ -13,7 +13,7 @@ The analyzer resolves imports, re-exports, root TypeScript path aliases, selecte
 - `packages/contracts`: shared Zod HTTP schemas and evidence validation.
 - `packages/analysis-core`: TypeScript/JavaScript analysis using ts-morph and the TypeScript compiler.
 
-Analysis runs in a Node worker with a timeout and heap limit; the application does not execute or modify imported source. Results may be cached in backend memory for up to five minutes, with at most four graphs and a 4 MB limit per graph. Cache entries contain graph evidence snippets, but not the complete submitted file list or provider keys. Worker heap limits do not replace deployment-level resource limits.
+Analysis runs as a cancellable Node worker job with progress stages, a 15-second timeout, a 256 MB V8 old-generation heap limit and an 8 MB graph result limit; the application does not execute or modify imported source. Job records and reusable results are held in backend memory for at most five minutes; at most four cached graphs of up to 4 MB each are retained. They contain graph evidence snippets, but not the complete submitted file list or provider keys. Worker heap limits do not cap total process memory or replace deployment-level resource limits.
 
 ## Run locally
 

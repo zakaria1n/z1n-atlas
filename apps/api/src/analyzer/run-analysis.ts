@@ -1,13 +1,18 @@
 import { Worker } from "node:worker_threads";
 import type { CodeGraph } from "@z1n/contracts";
-import type { AnalyzerFile } from "@z1n/analysis-core";
+import type { AnalyzerFile, AnalysisStage } from "@z1n/analysis-core";
 
-type WorkerResponse = { graph?: CodeGraph; error?: string };
+type WorkerResponse = {
+  graph?: CodeGraph;
+  error?: string;
+  progress?: AnalysisStage;
+};
 export class AnalysisError extends Error {}
 export function runAnalysis(
   files: AnalyzerFile[],
   timeoutMs = 15_000,
   signal?: AbortSignal,
+  progress?: (stage: AnalysisStage) => void,
 ): Promise<CodeGraph> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -35,12 +40,16 @@ export function runAnalysis(
       timeoutMs,
     );
     signal?.addEventListener("abort", cancel, { once: true });
-    worker.once("message", (message: WorkerResponse) =>
+    worker.on("message", (message: WorkerResponse) => {
+      if (message.progress) {
+        if (!settled) progress?.(message.progress);
+        return;
+      }
       finish(
         message.error ? new AnalysisError(message.error) : undefined,
         message.graph,
-      ),
-    );
+      );
+    });
     worker.once("error", () =>
       finish(new AnalysisError("The analysis worker failed.")),
     );

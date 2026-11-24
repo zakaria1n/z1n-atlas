@@ -126,5 +126,24 @@ export const codeGraphSchema = z.object({
   unresolvedCalls: z.number().int().nonnegative(),
   notice: z.string(),
 });
+export const analysisStageSchema = z.enum([
+  "parsing",
+  "imports",
+  "symbols",
+  "frameworks",
+  "validating",
+]);
+export const analysisJobStartSchema = z.object({ jobId: z.uuid() }).strict();
+export const analysisJobSchema = z.discriminatedUnion("status", [
+  z
+    .object({ status: z.literal("running"), stage: analysisStageSchema })
+    .strict(),
+  z.object({ status: z.literal("complete"), graph: codeGraphSchema }).strict(),
+  z
+    .object({ status: z.literal("failed"), error: z.string().max(300) })
+    .strict(),
+  z.object({ status: z.literal("cancelled") }).strict(),
+]);
+export type AnalysisJob = z.infer<typeof analysisJobSchema>;
 export const apiErrorSchema = z.object({ error: z.string() });
 export type AnalysisRequest = z.infer<typeof analysisRequestSchema>;

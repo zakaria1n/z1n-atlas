@@ -13,6 +13,8 @@ import {
   journeyRequestSchema,
   journeySchema,
   journeyIsValid,
+  analysisJobStartSchema,
+  analysisJobSchema,
   type AnalysisRequest,
   type GitHubRepository,
   type ProviderRequest,
@@ -20,6 +22,7 @@ import {
   type ChatRequest,
   type JourneyRequest,
   type CodeGraph,
+  type AnalysisJob,
 } from "@z1n/contracts";
 
 const configured = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000";
@@ -150,12 +153,75 @@ export async function requestJourney(
 export async function analyzeRepository(
   input: AnalysisRequest,
   signal?: AbortSignal,
+  onProgress?: (
+    stage: Extract<AnalysisJob, { status: "running" }>["stage"],
+  ) => void,
 ) {
   const request = analysisRequestSchema.parse(input);
-  const parsed = codeGraphSchema.safeParse(
-    await send("/api/analysis", request, signal),
+  const started = analysisJobStartSchema.safeParse(
+    await send("/api/analysis/jobs", request, signal),
   );
-  if (!parsed.success || !graphIsValid(parsed.data, request.files))
-    throw new Error("The server returned invalid graph evidence.");
-  return parsed.data;
+  if (!started.success)
+    throw new Error("The server returned an invalid analysis job.");
+  const url = `${backendUrl()}/api/analysis/jobs/${started.data.jobId}`;
+  const release = () => {
+    void fetch(url, {
+      method: "DELETE",
+      cache: "no-store",
+      keepalive: true,
+    }).catch(() => {});
+  };
+  if (signal?.aborted) {
+    release();
+    throw new DOMException("Analysis cancelled.", "AbortError");
+  }
+  signal?.addEventListener("abort", release, { once: true });
+  try {
+    while (true) {
+      const response = await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+        signal,
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const parsed = apiErrorSchema.safeParse(payload);
+        throw new Error(
+          parsed.success
+            ? parsed.data.error
+            : "Analysis status is unavailable.",
+        );
+      }
+      const state = analysisJobSchema.safeParse(payload);
+      if (!state.success)
+        throw new Error("The server returned an invalid analysis status.");
+      if (state.data.status === "complete") {
+        const graph = codeGraphSchema.parse(state.data.graph);
+        if (!graphIsValid(graph, request.files))
+          throw new Error("The server returned invalid graph evidence.");
+        return graph;
+      }
+      if (state.data.status === "failed") throw new Error(state.data.error);
+      if (state.data.status === "cancelled")
+        throw new DOMException("Analysis cancelled.", "AbortError");
+      onProgress?.(state.data.stage);
+      await new Promise<void>((resolve, reject) => {
+        const finish = () => {
+          signal?.removeEventListener("abort", cancel);
+          resolve();
+        };
+        const timer = setTimeout(finish, 400);
+        const cancel = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", cancel);
+          reject(new DOMException("Analysis cancelled.", "AbortError"));
+        };
+        signal?.addEventListener("abort", cancel, { once: true });
+        if (signal?.aborted) cancel();
+      });
+    }
+  } finally {
+    signal?.removeEventListener("abort", release);
+    release();
+  }
 }

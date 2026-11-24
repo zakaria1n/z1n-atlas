@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import type { CodeGraph } from "@z1n/contracts";
+import type { AnalysisJob, CodeGraph } from "@z1n/contracts";
 import {
   useRepositorySession,
   type RepositorySession,
@@ -18,6 +18,8 @@ export function AnalysisCanvas({
   const { setAnalysisId } = useRepositorySession();
   const [graph, setGraph] = useState<CodeGraph | null>(null);
   const [busy, setBusy] = useState(false);
+  const [stage, setStage] =
+    useState<Extract<AnalysisJob, { status: "running" }>["stage"]>("parsing");
   const [error, setError] = useState("");
   const [consent, setConsent] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -26,6 +28,7 @@ export function AnalysisCanvas({
   async function analyze() {
     setError("");
     setBusy(true);
+    setStage("parsing");
     dialog.current?.close();
     const controller = new AbortController();
     request.current = controller;
@@ -37,6 +40,7 @@ export function AnalysisCanvas({
           files: session.files.map(({ path, content }) => ({ path, content })),
         },
         controller.signal,
+        setStage,
       );
       setGraph(result);
       setAnalysisId(result.analysisId);
@@ -74,7 +78,15 @@ export function AnalysisCanvas({
       </button>
       {busy && (
         <p role="status">
-          Analyzing source…{" "}
+          {
+            {
+              parsing: "Parsing selected source…",
+              imports: "Resolving imports…",
+              symbols: "Resolving symbols and calls…",
+              frameworks: "Analyzing framework relationships…",
+              validating: "Validating graph evidence…",
+            }[stage]
+          }{" "}
           <button
             className="text-link"
             onClick={() => request.current?.abort()}

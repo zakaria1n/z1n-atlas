@@ -4,7 +4,10 @@ import { graphIsValid } from "@z1n/contracts";
 
 try {
   const input = workerData as AnalyzerFile[];
-  const graph = analyzeFiles(input);
+  const graph = analyzeFiles(input, (stage) =>
+    parentPort?.postMessage({ progress: stage }),
+  );
+  parentPort?.postMessage({ progress: "validating" });
   if (!graphIsValid(graph, input)) throw new Error("Invalid graph evidence");
   parentPort?.postMessage({ graph });
 } catch {

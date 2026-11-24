@@ -62,6 +62,43 @@ const request = (payload: unknown, origin = "http://localhost:3000") =>
     payload,
   });
 describe("analysis HTTP boundary", () => {
+  it("starts a bounded job, exposes status and supports cleanup", async () => {
+    const isolated = await createApp();
+    try {
+      const headers = { origin: "http://localhost:3000" };
+      const started = await isolated.inject({
+        method: "POST",
+        url: "/api/analysis/jobs",
+        headers,
+        payload: {
+          files: [{ path: "a.ts", content: "export const x = 1;" }],
+          origin: "local",
+          consent: true,
+        },
+      });
+      expect(started.statusCode).toBe(202);
+      const url = `/api/analysis/jobs/${started.json().jobId}`;
+      const rejected = await isolated.inject({
+        method: "GET",
+        url,
+        headers: { origin: "https://hostile.example" },
+      });
+      expect(rejected.statusCode).toBe(403);
+      await vi.waitFor(async () => {
+        const response = await isolated.inject({ method: "GET", url, headers });
+        expect(response.json().status).toBe("complete");
+        expect(response.json().graph.analysisId).toBeTruthy();
+      });
+      expect(
+        (await isolated.inject({ method: "DELETE", url, headers })).statusCode,
+      ).toBe(204);
+      expect(
+        (await isolated.inject({ method: "GET", url, headers })).statusCode,
+      ).toBe(404);
+    } finally {
+      await isolated.close();
+    }
+  });
   it("rejects remote origins, unconsented local source and invalid paths", async () => {
     expect(
       (

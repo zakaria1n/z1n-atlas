@@ -16,6 +16,8 @@ import {
   journeyRequestSchema,
   journeySchema,
   graphIsValid,
+  analysisJobStartSchema,
+  analysisJobSchema,
 } from "@z1n/contracts";
 import {
   importGitHubRepository,
@@ -29,6 +31,18 @@ import { answerQuestion } from "./evidence/answer";
 import { findJourney } from "./journey/find-journey";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 import { createAnalysisCache } from "./analyzer/analysis-cache";
+import { createAnalysisJobs } from "./analyzer/analysis-jobs";
+function validatedGraph(
+  value: unknown,
+  files: { path: string; content: string }[],
+) {
+  const graph = codeGraphSchema.parse(value);
+  if (!graphIsValid(graph, files))
+    throw new AnalysisError("Analysis returned invalid evidence.");
+  if (Buffer.byteLength(JSON.stringify(graph)) > 8_000_000)
+    throw new AnalysisError("The graph exceeded the result size limit.");
+  return graph;
+}
 
 export async function createApp(
   webOrigin = "http://localhost:3000",
@@ -39,17 +53,25 @@ export async function createApp(
     requestTimeout: 45_000,
   });
   const analysisCache = createAnalysisCache();
+  const analysisJobs = createAnalysisJobs();
   app.addHook("onClose", async () => {
+    analysisJobs.clear();
     analysisCache.clear();
   });
   await app.register(cors, {
     origin: webOrigin,
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "DELETE"],
     allowedHeaders: ["content-type"],
   });
   app.addHook("onRequest", async (request, reply) => {
     reply.header("Cache-Control", "no-store");
-    if (request.method === "POST" && request.headers.origin !== webOrigin)
+    if (
+      (request.method === "POST" ||
+        request.method === "DELETE" ||
+        (request.method === "GET" &&
+          request.url.startsWith("/api/analysis/jobs/"))) &&
+      request.headers.origin !== webOrigin
+    )
       return reply
         .code(403)
         .send(apiErrorSchema.parse({ error: "Invalid request origin." }));
@@ -126,11 +148,10 @@ export async function createApp(
     };
     reply.raw.once("close", cancel);
     try {
-      const graph = codeGraphSchema.parse(
+      const graph = validatedGraph(
         await runAnalysis(input.data.files, 15_000, abort.signal),
+        input.data.files,
       );
-      if (!graphIsValid(graph, input.data.files))
-        throw new AnalysisError("Analysis returned invalid evidence.");
       const analysisId = analysisCache.put(input.data.files, graph);
       return codeGraphSchema.parse({ ...graph, analysisId });
     } catch (error) {
@@ -142,6 +163,56 @@ export async function createApp(
       reply.raw.off("close", cancel);
       active--;
     }
+  });
+  app.post("/api/analysis/jobs", async (request, reply) => {
+    const input = analysisRequestSchema.safeParse(request.body);
+    if (!input.success)
+      return reply
+        .code(400)
+        .send({ error: "Invalid source selection or missing consent." });
+    if (!canStart())
+      return reply
+        .code(429)
+        .send({ error: "Service is busy. Try again shortly." });
+    const id = analysisJobs.start(
+      async (signal, progress) => {
+        const graph = validatedGraph(
+          await runAnalysis(input.data.files, 15_000, signal, progress),
+          input.data.files,
+        );
+        const analysisId = analysisCache.put(input.data.files, graph);
+        return codeGraphSchema.parse({ ...graph, analysisId });
+      },
+      () => {
+        active--;
+      },
+    );
+    if (!id) {
+      active--;
+      return reply
+        .code(429)
+        .send({ error: "Too many analysis jobs. Try again shortly." });
+    }
+    return reply.code(202).send(analysisJobStartSchema.parse({ jobId: id }));
+  });
+  app.get("/api/analysis/jobs/:jobId", async (request, reply) => {
+    const params = analysisJobStartSchema.safeParse(request.params);
+    const state = params.success
+      ? analysisJobs.get(params.data.jobId)
+      : undefined;
+    if (!state)
+      return reply
+        .code(404)
+        .send({ error: "Analysis job was not found or expired." });
+    return analysisJobSchema.parse(state);
+  });
+  app.delete("/api/analysis/jobs/:jobId", async (request, reply) => {
+    const params = analysisJobStartSchema.safeParse(request.params);
+    if (!params.success || !analysisJobs.cancel(params.data.jobId))
+      return reply
+        .code(404)
+        .send({ error: "Analysis job was not found or expired." });
+    return reply.code(204).send();
   });
   app.post(
     "/api/providers/models",

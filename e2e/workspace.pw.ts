@@ -96,12 +96,14 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
     )
     .check();
   const analysisResponse = page.waitForResponse(
-    (response) =>
-      response.url().endsWith("/api/analysis") &&
-      response.request().method() === "POST",
+    async (response) =>
+      response.url().includes("/api/analysis/jobs/") &&
+      response.request().method() === "GET" &&
+      response.ok() &&
+      (await response.json()).status === "complete",
   );
   await page.getByRole("button", { name: "Send and analyze" }).click();
-  const analysisId = (await (await analysisResponse).json())
+  const analysisId = (await (await analysisResponse).json()).graph
     .analysisId as string;
   expect(analysisId).toBeTruthy();
   await expect(
