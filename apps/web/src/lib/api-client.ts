@@ -8,10 +8,13 @@ import {
   modelListSchema,
   providerTestRequestSchema,
   providerTestResultSchema,
+  chatRequestSchema,
+  chatAnswerSchema,
   type AnalysisRequest,
   type GitHubRepository,
   type ProviderRequest,
   type ProviderTestRequest,
+  type ChatRequest,
 } from "@z1n/contracts";
 
 const configured = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000";
@@ -87,6 +90,33 @@ export async function testProviderModel(
   );
   if (!parsed.success)
     throw new Error("The server returned an invalid test response.");
+  return parsed.data;
+}
+export async function askRepository(input: ChatRequest, signal?: AbortSignal) {
+  const request = chatRequestSchema.parse(input);
+  const parsed = chatAnswerSchema.safeParse(
+    await send("/api/chat", request, signal),
+  );
+  if (!parsed.success)
+    throw new Error("The server returned an invalid answer.");
+  const files = new Map(
+    request.files.map((file) => [file.path, file.content.split(/\r\n|\r|\n/)]),
+  );
+  for (const claim of parsed.data.claims)
+    for (const citation of claim.citations) {
+      const lines = files.get(citation.filePath);
+      if (
+        !lines ||
+        citation.endLine < citation.startLine ||
+        citation.endLine > lines.length ||
+        !citation.snippet ||
+        !lines
+          .slice(citation.startLine - 1, citation.endLine)
+          .join("\n")
+          .includes(citation.snippet.replace(/\r\n|\r/g, "\n"))
+      )
+        throw new Error("The server returned an invalid source citation.");
+    }
   return parsed.data;
 }
 export async function analyzeRepository(

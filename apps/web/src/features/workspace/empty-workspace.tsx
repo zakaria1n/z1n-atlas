@@ -6,6 +6,7 @@ import { buildFileTree } from "@/features/repository-explorer/file-tree";
 import { FileTree } from "@/features/repository-explorer/file-tree-view";
 import { AnalysisCanvas } from "@/features/graph/analysis-canvas";
 import { CodeView } from "@/features/repository-explorer/code-view";
+import { Assistant } from "@/features/chat/assistant";
 
 export function EmptyWorkspace() {
   const { session } = useRepositorySession();
@@ -15,6 +16,7 @@ export function EmptyWorkspace() {
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedLine, setSelectedLine] = useState<number | undefined>();
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const selected = session?.files.find((file) => file.path === selectedPath);
   const tree = buildFileTree(session?.files ?? [], query);
   function selectFile(path: string, line?: number) {
@@ -56,8 +58,11 @@ export function EmptyWorkspace() {
       </button>
       <button
         className="orb"
-        aria-label="About AI assistant"
-        onClick={() => assistant.current?.showModal()}
+        aria-label="Open AI assistant"
+        onClick={() => {
+          setAssistantOpen(true);
+          assistant.current?.showModal();
+        }}
       >
         ✦
       </button>
@@ -128,6 +133,7 @@ export function EmptyWorkspace() {
         ref={assistant}
         className="panel assistant-panel"
         aria-labelledby="assistant-title"
+        onClose={() => setAssistantOpen(false)}
       >
         <form method="dialog">
           <button className="close" aria-label="Close assistant">
@@ -135,13 +141,15 @@ export function EmptyWorkspace() {
           </button>
         </form>
         <h2 id="assistant-title">AI assistant</h2>
-        <p>
-          AI explanations are not available yet. Provider configuration is
-          planned in Settings.
-        </p>
-        <Link href="/settings" className="text-link">
-          View settings →
-        </Link>
+        {assistantOpen && (
+          <Assistant
+            session={session}
+            onOpenCitation={(path, line) => {
+              assistant.current?.close();
+              selectFile(path, line);
+            }}
+          />
+        )}
       </dialog>
     </main>
   );

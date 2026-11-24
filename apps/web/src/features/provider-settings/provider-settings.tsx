@@ -98,8 +98,8 @@ export function ProviderSettings() {
         </p>
         <p>
           Model discovery checks the list only. Testing a model sends a short
-          generation request that may incur provider charges. AI chat and
-          Feature Journey are not yet available.
+          generation request that may incur provider charges. Feature Journey is
+          not yet available.
         </p>
       </div>
       <form onSubmit={submit}>

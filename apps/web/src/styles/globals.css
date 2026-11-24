@@ -8,6 +8,42 @@
   --mint: #a7e3d0;
   --border: #e6e1dd;
 }
+.assistant-content {
+  line-height: 1.5;
+}
+.assistant-content form {
+  display: grid;
+  gap: 0.8rem;
+}
+.assistant-content textarea {
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.5rem;
+  color: var(--ink);
+  background: white;
+  resize: vertical;
+}
+.assistant-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+.assistant-consent input {
+  margin-top: 0.3rem;
+  flex-shrink: 0;
+}
+.assistant-answer {
+  overflow-wrap: anywhere;
+}
+.citation-button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0.2rem 0;
+  text-align: left;
+}
 .provider-settings {
   display: grid;
   grid-template-columns: 1fr 1fr;
