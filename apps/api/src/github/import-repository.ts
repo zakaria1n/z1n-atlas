@@ -53,7 +53,9 @@ async function getJson(
   path: string,
   maxBytes: number,
   fetcher: typeof fetch,
+  signal: AbortSignal,
 ): Promise<unknown> {
+  signal.throwIfAborted();
   const response = await fetcher(`https://api.github.com${path}`, {
     headers: {
       Accept: "application/vnd.github+json",
@@ -61,7 +63,7 @@ async function getJson(
     },
     redirect: "error",
     cache: "no-store",
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
   });
   if (!response.ok) {
     if (response.status === 404)
@@ -92,6 +94,7 @@ async function getJson(
   const chunks: Uint8Array[] = [];
   let length = 0;
   while (true) {
+    signal.throwIfAborted();
     const { done, value } = await reader.read();
     if (done) break;
     length += value.byteLength;
@@ -117,11 +120,14 @@ async function getJson(
 export async function importGitHubRepository(
   repository: GitHubRepository,
   fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<GitHubSnapshot> {
   const base = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
+  const deadline = AbortSignal.timeout(30_000);
+  const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   try {
     const metadata = metadataSchema.parse(
-      await getJson(base, 100_000, fetcher),
+      await getJson(base, 100_000, fetcher, combined),
     );
     if (metadata.private)
       throw new GitHubImportError(
@@ -133,6 +139,7 @@ export async function importGitHubRepository(
         `${base}/commits/${encodeURIComponent(metadata.default_branch)}`,
         1_000_000,
         fetcher,
+        combined,
       ),
     ).sha;
     const tree = treeSchema.parse(
@@ -140,6 +147,7 @@ export async function importGitHubRepository(
         `${base}/git/trees/${commit}?recursive=1`,
         MAX_TREE_BYTES,
         fetcher,
+        combined,
       ),
     );
     const candidates = tree.tree.filter(
@@ -157,6 +165,7 @@ export async function importGitHubRepository(
     let total = 0;
     const files: ImportedFile[] = [];
     for (const entry of candidates) {
+      combined.throwIfAborted();
       if (files.length >= MAX_FILES || total + entry.size! > MAX_TOTAL_BYTES) {
         skipped++;
         continue;
@@ -166,6 +175,7 @@ export async function importGitHubRepository(
           `${base}/git/blobs/${entry.sha}`,
           MAX_FILE_BYTES * 2 + 10000,
           fetcher,
+          combined,
         ),
       );
       const bytes = Buffer.from(blob.content.replace(/\s/g, ""), "base64");

@@ -76,9 +76,14 @@ export async function createApp(
         return reply
           .code(429)
           .send({ error: "Service is busy. Try again shortly." });
+      const abort = new AbortController();
+      const cancel = () => {
+        if (!reply.raw.writableEnded) abort.abort();
+      };
+      reply.raw.once("close", cancel);
       try {
         return githubSnapshotSchema.parse(
-          await importGitHubRepository(repository),
+          await importGitHubRepository(repository, fetch, abort.signal),
         );
       } catch (error) {
         if (error instanceof GitHubImportError)
@@ -95,6 +100,7 @@ export async function createApp(
             .send({ error: error.message });
         return reply.code(502).send({ error: "Import failed. Try again." });
       } finally {
+        reply.raw.off("close", cancel);
         active--;
       }
     },

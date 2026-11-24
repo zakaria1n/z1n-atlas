@@ -32,6 +32,19 @@ describe("repository filtering", () => {
 });
 
 describe("GitHub importer", () => {
+  it("stops further requests when the caller cancels", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      controller.abort();
+      return new Response(
+        JSON.stringify({ private: false, default_branch: "main" }),
+      );
+    });
+    await expect(
+      importGitHubRepository(repo, fetcher, controller.signal),
+    ).rejects.toBeInstanceOf(GitHubImportError);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("imports bounded text and reports excluded files and a truncated tree", async () => {
     const fetcher = responses([
       { private: false, default_branch: "main" },

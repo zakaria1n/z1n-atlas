@@ -1,5 +1,12 @@
 "use client";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { createImportCoordinator } from "./import-coordinator";
 
 export type SourceFile = { path: string; size: number; content: string };
 export type RepositorySession = {
@@ -13,12 +20,17 @@ export type RepositorySession = {
 type SessionContext = {
   session: RepositorySession | null;
   setSession: (session: RepositorySession | null) => void;
+  beginImport: () => () => boolean;
 };
 const Context = createContext<SessionContext | null>(null);
 export function RepositoryProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<RepositorySession | null>(null);
+  const coordinator = useRef(createImportCoordinator());
+  function beginImport() {
+    return coordinator.current.begin();
+  }
   return (
-    <Context.Provider value={{ session, setSession }}>
+    <Context.Provider value={{ session, setSession, beginImport }}>
       {children}
     </Context.Provider>
   );

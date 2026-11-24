@@ -1,5 +1,5 @@
 "use client";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRepositorySession, type SourceFile } from "./repository-session";
 import { parseGitHubRepository } from "@z1n/contracts";
@@ -13,7 +13,9 @@ type Summary = {
   truncated: boolean;
 };
 export function GitHubImport() {
-  const { setSession } = useRepositorySession();
+  const { setSession, beginImport } = useRepositorySession();
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => pending.current?.abort(), []);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -29,9 +31,16 @@ export function GitHubImport() {
       );
       return;
     }
+    const isCurrent = beginImport();
+    const controller = new AbortController();
+    pending.current = controller;
     setBusy(true);
     try {
-      const snapshot = await importPublicRepository(repository);
+      const snapshot = await importPublicRepository(
+        repository,
+        controller.signal,
+      );
+      if (!isCurrent() || controller.signal.aborted) return;
       setSummary(snapshot);
       setSession({
         label: snapshot.repository.url,
@@ -42,12 +51,14 @@ export function GitHubImport() {
         commit: snapshot.commit,
       });
     } catch (error) {
+      if (!isCurrent() || controller.signal.aborted) return;
       setError(
         error instanceof Error
           ? error.message
           : "Could not reach the server. Try again.",
       );
     } finally {
+      if (pending.current === controller) pending.current = null;
       setBusy(false);
     }
   }
@@ -82,6 +93,15 @@ export function GitHubImport() {
         {busy &&
           "Reading repository metadata and eligible files from GitHub. This may take a moment."}
       </p>
+      {busy && (
+        <button
+          type="button"
+          className="provider-clear"
+          onClick={() => pending.current?.abort()}
+        >
+          Cancel import
+        </button>
+      )}
       {error && (
         <p id="import-error" role="alert" className="error">
           {error}

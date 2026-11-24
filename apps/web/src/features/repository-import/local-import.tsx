@@ -15,7 +15,7 @@ type PickerWindow = Window & {
   showDirectoryPicker?: (options: { mode: "read" }) => Promise<Directory>;
 };
 export function LocalImport() {
-  const { setSession } = useRepositorySession();
+  const { setSession, beginImport } = useRepositorySession();
   const input = useRef<HTMLInputElement>(null);
   const [capability, setCapability] = useState<
     "checking" | "picker" | "fallback" | "unsupported"
@@ -36,14 +36,17 @@ export function LocalImport() {
   async function read(
     entries: AsyncIterable<{ path: string; file: () => Promise<File> }>,
   ) {
+    const isCurrent = beginImport();
     setBusy(true);
     setError("");
     setResult(null);
     try {
       const selection = await readLocalFiles(entries);
+      if (!isCurrent()) return;
       setResult(selection);
       setSession({ label: "Local folder", origin: "local", ...selection });
     } catch {
+      if (!isCurrent()) return;
       setError(
         "The folder could not be read safely. Check permissions, folder depth, and size, then try again.",
       );

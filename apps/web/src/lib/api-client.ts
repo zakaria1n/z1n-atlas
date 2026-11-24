@@ -65,9 +65,12 @@ async function send(
   }
   return payload;
 }
-export async function importPublicRepository(repository: GitHubRepository) {
+export async function importPublicRepository(
+  repository: GitHubRepository,
+  signal?: AbortSignal,
+) {
   const parsed = githubSnapshotSchema.safeParse(
-    await send("/api/repositories/import", { url: repository.url }),
+    await send("/api/repositories/import", { url: repository.url }, signal),
   );
   if (!parsed.success)
     throw new Error("The server returned an invalid repository response.");
