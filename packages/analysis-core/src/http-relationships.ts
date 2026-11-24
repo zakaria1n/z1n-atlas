@@ -3,17 +3,15 @@ import {
   SyntaxKind,
   VariableDeclarationKind,
   type CallExpression,
-  type Project,
   type VariableDeclaration,
 } from "ts-morph";
 import {
   addNode,
   evidence,
   relative,
-  type GraphParts as Parts,
   type HttpRoute as Route,
+  type SymbolContext as Context,
 } from "./framework-graph";
-import type { AnalyzerFile } from "./analyze-files";
 import { addNextRoutes } from "./next-routes";
 import { ownerId, resolveTarget, symbolId, unalias } from "./symbols-and-calls";
 
@@ -88,20 +86,13 @@ function propertyCall(
 function joinPath(prefix: string, route: string): string {
   return `${prefix.replace(/\/$/, "")}/${route.replace(/^\//, "")}` || "/";
 }
-export function addHttpRelationships(
-  project: Project,
-  paths: Set<string>,
-  files: AnalyzerFile[],
-  graph: Parts,
-): number {
+export function addHttpRelationships(context: Context): number {
+  const { graph } = context;
   const owners = new Map<string, "app" | "router">();
   const calls: CallExpression[] = [];
   let unresolved = 0;
-  for (const filePath of paths) {
-    const source = project.getSourceFileOrThrow(`/workspace/${filePath}`);
-    for (const variable of source.getDescendantsOfKind(
-      SyntaxKind.VariableDeclaration,
-    )) {
+  for (const { calls: fileCalls, callVariables } of context.sources) {
+    for (const variable of callVariables) {
       const initializer = variable.getInitializer();
       if (!initializer || !Node.isCallExpression(initializer)) continue;
       const expr = initializer.getExpression();
@@ -115,7 +106,7 @@ export function addHttpRelationships(
       )
         owners.set(symbolId(variable), "router");
     }
-    calls.push(...source.getDescendantsOfKind(SyntaxKind.CallExpression));
+    for (const call of fileCalls) calls.push(call);
   }
   const mounts = new Map<
     string,
@@ -174,7 +165,7 @@ export function addHttpRelationships(
       }
     return results;
   }
-  const nextRoutes = addNextRoutes(project, paths, files, graph);
+  const nextRoutes = addNextRoutes(context);
   const routes: Route[] = nextRoutes.routes;
   unresolved += nextRoutes.unresolved;
   for (const call of calls) {
@@ -230,7 +221,7 @@ export function addHttpRelationships(
           : undefined,
       });
       for (const handler of args.slice(1)) {
-        const target = resolveTarget(handler, graph);
+        const target = resolveTarget(handler, context);
         if (!target) {
           unresolved++;
           continue;
@@ -295,7 +286,7 @@ export function addHttpRelationships(
     addNode(call, id, `${method} ${url}`, "http-call", graph);
     graph.edges.push({
       id: `${id}:requests`,
-      source: ownerId(call, graph),
+      source: ownerId(call, context),
       target: id,
       kind: "requests",
       confidence: "confirmed",

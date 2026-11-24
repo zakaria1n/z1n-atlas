@@ -1,9 +1,14 @@
 import path from "node:path";
 import { ts } from "ts-morph";
 import type { AnalyzerFile } from "./analyze-files";
-import type { GraphParts } from "./framework-graph";
+import { addEvidence, type GraphParts } from "./framework-graph";
 
-type ManifestEvidence = { file: AnalyzerFile; start: number; end: number };
+export type ManifestEvidence = {
+  file: AnalyzerFile;
+  start: number;
+  end: number;
+};
+
 function frameworkDependency(
   file: AnalyzerFile,
   names: string[],
@@ -54,52 +59,60 @@ function frameworkDependency(
   }
   return null;
 }
-function findManifest(
-  filePath: string,
-  files: AnalyzerFile[],
-  names: string[],
-): ManifestEvidence | null {
-  let directory = path.posix.dirname(filePath);
-  while (directory !== ".") {
-    const manifest = files.find(
-      (file) => file.path === `${directory}/package.json`,
-    );
-    if (manifest) return frameworkDependency(manifest, names);
-    directory = path.posix.dirname(directory);
+
+export type ManifestLookup = {
+  next(filePath: string): ManifestEvidence | null;
+  react(filePath: string): ManifestEvidence | null;
+};
+
+/**
+ * Finds the nearest package manifest above a file and reports the dependency
+ * that proves a framework convention. Each manifest is parsed once per
+ * framework instead of once for every file that consults it.
+ */
+export function createManifestLookup(files: AnalyzerFile[]): ManifestLookup {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const cache = new Map<string, ManifestEvidence | null>();
+  function dependency(
+    file: AnalyzerFile,
+    names: string[],
+  ): ManifestEvidence | null {
+    const key = `${file.path}\n${names.join()}`;
+    if (!cache.has(key)) cache.set(key, frameworkDependency(file, names));
+    return cache.get(key)!;
   }
-  const root = files.find((file) => file.path === "package.json");
-  return root ? frameworkDependency(root, names) : null;
+  function find(filePath: string, names: string[]): ManifestEvidence | null {
+    let directory = path.posix.dirname(filePath);
+    while (directory !== ".") {
+      const manifest = byPath.get(`${directory}/package.json`);
+      if (manifest) return dependency(manifest, names);
+      directory = path.posix.dirname(directory);
+    }
+    const root = byPath.get("package.json");
+    return root ? dependency(root, names) : null;
+  }
+  return {
+    next: (filePath) => find(filePath, ["next"]),
+    react: (filePath) => find(filePath, ["react", "next"]),
+  };
 }
-export function findNextManifest(
-  filePath: string,
-  files: AnalyzerFile[],
-): ManifestEvidence | null {
-  return findManifest(filePath, files, ["next"]);
-}
-export function findReactManifest(
-  filePath: string,
-  files: AnalyzerFile[],
-): ManifestEvidence | null {
-  return findManifest(filePath, files, ["react", "next"]);
-}
+
 export function addManifestEvidence(
   result: ManifestEvidence,
   graph: GraphParts,
 ): string {
   const { file, start, end } = result;
-  const id = `${file.path}:${start}:${end}:framework-manifest`;
-  if (!graph.evidence.some((item) => item.id === id)) {
-    const before = file.content.slice(0, start);
-    const snippet = file.content.slice(start, end);
-    const startLine = before.split(/\r\n|\r|\n/).length,
-      endLine = startLine + snippet.split(/\r\n|\r|\n/).length - 1;
-    graph.evidence.push({
-      id,
+  const before = file.content.slice(0, start);
+  const snippet = file.content.slice(start, end);
+  const startLine = before.split(/\r\n|\r|\n/).length;
+  return addEvidence(
+    {
+      id: `${file.path}:${start}:${end}:framework-manifest`,
       filePath: file.path,
       startLine,
-      endLine,
+      endLine: startLine + snippet.split(/\r\n|\r|\n/).length - 1,
       snippet,
-    });
-  }
-  return id;
+    },
+    graph,
+  );
 }

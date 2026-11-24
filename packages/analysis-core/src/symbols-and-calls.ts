@@ -1,58 +1,20 @@
+import { Node, SyntaxKind, ts, type Symbol as MorphSymbol } from "ts-morph";
 import {
-  Node,
-  SyntaxKind,
-  ts,
-  type Project,
-  type SourceFile,
-  type Symbol as MorphSymbol,
-} from "ts-morph";
-import type { GraphEdge, GraphEvidence, GraphNode } from "@z1n/contracts";
+  relative,
+  type AnalysisContext,
+  type SymbolContext,
+} from "./framework-graph";
+import type { SymbolNames } from "./source-nodes";
 
-type GraphParts = {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  evidence: GraphEvidence[];
+export type SymbolIndex = {
+  /** Tracked declarations keyed by symbol node id. */
+  declarations: Map<string, Node>;
+  /** Ids of all symbol nodes. */
+  ids: Set<string>;
+  /** Ids of function and method nodes, which own calls and references written inside them. */
+  owners: Set<string>;
 };
-function relative(source: SourceFile): string {
-  return source.getFilePath().replace(/^\/workspace\//, "");
-}
-export function symbolId(node: Node): string {
-  return `${relative(node.getSourceFile())}#${node.getStart()}`;
-}
-function namedDeclarations(source: SourceFile): Node[] {
-  const functions = source
-    .getDescendantsOfKind(SyntaxKind.FunctionDeclaration)
-    .filter((node) => Boolean(node.getNameNode() && node.getBody()));
-  const methods = source
-    .getDescendantsOfKind(SyntaxKind.MethodDeclaration)
-    .filter((node) => Boolean(node.getNameNode() && node.getBody()));
-  const classes = source
-    .getDescendantsOfKind(SyntaxKind.ClassDeclaration)
-    .filter((node) => Boolean(node.getNameNode()));
-  const variables = source
-    .getDescendantsOfKind(SyntaxKind.VariableDeclaration)
-    .filter((node) => {
-      const initializer = node.getInitializer();
-      return Boolean(
-        initializer &&
-        (Node.isArrowFunction(initializer) ||
-          Node.isFunctionExpression(initializer)) &&
-        Node.isIdentifier(node.getNameNode()),
-      );
-    });
-  const properties = source
-    .getDescendantsOfKind(SyntaxKind.PropertyDeclaration)
-    .filter((node) => {
-      const initializer = node.getInitializer();
-      return Boolean(
-        initializer &&
-        (Node.isArrowFunction(initializer) ||
-          Node.isFunctionExpression(initializer)) &&
-        Node.isIdentifier(node.getNameNode()),
-      );
-    });
-  return [...functions, ...methods, ...classes, ...variables, ...properties];
-}
+
 function nameNode(node: Node): Node | undefined {
   if (
     Node.isFunctionDeclaration(node) ||
@@ -70,6 +32,9 @@ function kind(node: Node): "function" | "method" | "class" {
     return "method";
   return "function";
 }
+export function symbolId(node: Node): string {
+  return `${relative(node)}#${node.getStart()}`;
+}
 export function unalias(
   symbol: MorphSymbol | undefined,
 ): MorphSymbol | undefined {
@@ -85,52 +50,80 @@ export function unalias(
   }
   return current;
 }
-export function addSymbolsAndCalls(
-  project: Project,
-  paths: Set<string>,
-  graph: GraphParts,
-): number {
-  let unresolvedCalls = 0;
+
+/**
+ * A declaration resolved from an identifier carries either its declared name
+ * or an import or export alias, and one resolved from a property access only
+ * its declared member name. Names outside those sets cannot resolve, so the
+ * type checker is not consulted for them.
+ */
+export function mayResolve(node: Node, names: SymbolNames): boolean {
+  let expression: Node = node;
+  while (
+    Node.isParenthesizedExpression(expression) ||
+    Node.isAsExpression(expression) ||
+    Node.isNonNullExpression(expression) ||
+    Node.isSatisfiesExpression(expression)
+  )
+    expression = expression.getExpression();
+  const raw = expression.compilerNode;
+  if (ts.isIdentifier(raw) || ts.isPrivateIdentifier(raw))
+    return names.any.has(raw.text);
+  if (ts.isPropertyAccessExpression(raw))
+    return names.declared.has(raw.name.text);
+  return true;
+}
+
+export function addSymbolsAndCalls(context: AnalysisContext): {
+  symbols: SymbolIndex;
+  unresolvedCalls: number;
+} {
+  const { graph, names } = context;
   const declarations = new Map<string, Node>();
-  for (const filePath of paths) {
-    const source = project.getSourceFileOrThrow(`/workspace/${filePath}`);
-    for (const declaration of namedDeclarations(source)) {
+  for (const { path, declarations: tracked } of context.sources)
+    for (const declaration of tracked) {
       const name = nameNode(declaration);
       if (!name) continue;
       const id = symbolId(declaration);
       declarations.set(id, declaration);
       graph.nodes.push({
         id,
-        path: filePath,
+        path,
         exports: [],
         kind: kind(declaration),
         name: name.getText(),
         startLine: declaration.getStartLineNumber(),
         endLine: declaration.getEndLineNumber(),
       });
-      const evidenceId = `${filePath}:${name.getStart()}:contains:${id}`;
+      const evidenceId = `${path}:${name.getStart()}:contains:${id}`;
       graph.evidence.push({
         id: evidenceId,
-        filePath,
+        filePath: path,
         startLine: name.getStartLineNumber(),
         endLine: name.getEndLineNumber(),
         snippet: name.getText(),
       });
       graph.edges.push({
         id: evidenceId,
-        source: filePath,
+        source: path,
         target: id,
         kind: "contains",
         confidence: "confirmed",
         evidenceId,
       });
     }
-  }
-  for (const filePath of paths) {
-    const source = project.getSourceFileOrThrow(`/workspace/${filePath}`);
-    for (const identifier of source.getDescendantsOfKind(
-      SyntaxKind.Identifier,
-    )) {
+  const symbols: SymbolIndex = {
+    declarations,
+    ids: new Set(declarations.keys()),
+    owners: new Set(
+      [...declarations]
+        .filter(([, node]) => kind(node) !== "class")
+        .map(([id]) => id),
+    ),
+  };
+  let unresolvedCalls = 0;
+  for (const { path, source, identifiers, calls } of context.sources) {
+    for (const identifier of identifiers) {
       if (
         identifier.getFirstAncestor(
           (node) =>
@@ -166,7 +159,7 @@ export function addSymbolsAndCalls(
       )
         continue;
       let owner: Node | undefined = parent;
-      let sourceId = filePath;
+      let sourceId = path;
       while (owner && !Node.isSourceFile(owner)) {
         const id = symbolId(owner);
         if (declarations.has(id)) {
@@ -177,10 +170,10 @@ export function addSymbolsAndCalls(
       }
       const target = targets[0];
       if (sourceId === target) continue;
-      const id = `${filePath}:${identifier.getStart()}:references:${target}`;
+      const id = `${path}:${identifier.getStart()}:references:${target}`;
       graph.evidence.push({
         id,
-        filePath,
+        filePath: path,
         startLine: identifier.getStartLineNumber(),
         endLine: identifier.getEndLineNumber(),
         snippet: identifier.getText(),
@@ -194,9 +187,14 @@ export function addSymbolsAndCalls(
         evidenceId: id,
       });
     }
-    for (const call of source.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-      if (call.getExpression().getKind() === SyntaxKind.ImportKeyword) continue;
-      const symbol = unalias(call.getExpression().getSymbol());
+    for (const call of calls) {
+      const expression = call.getExpression();
+      if (expression.getKind() === SyntaxKind.ImportKeyword) continue;
+      if (!mayResolve(expression, names)) {
+        unresolvedCalls++;
+        continue;
+      }
+      const symbol = unalias(expression.getSymbol());
       const targets = (symbol?.getDeclarations() ?? [])
         .map(symbolId)
         .filter((id) => declarations.has(id));
@@ -206,7 +204,7 @@ export function addSymbolsAndCalls(
         continue;
       }
       let parent: Node | undefined = call.getParent();
-      let sourceId = filePath;
+      let sourceId = path;
       while (parent && !Node.isSourceFile(parent)) {
         const id = symbolId(parent);
         if (declarations.has(id)) {
@@ -216,10 +214,10 @@ export function addSymbolsAndCalls(
         parent = parent.getParent();
       }
       const target = unique[0];
-      const id = `${filePath}:${call.getStart()}:calls:${target}`;
+      const id = `${path}:${call.getStart()}:calls:${target}`;
       graph.evidence.push({
         id,
-        filePath,
+        filePath: path,
         startLine: call.getStartLineNumber(),
         endLine: call.getEndLineNumber(),
         snippet: call.getText(),
@@ -234,35 +232,29 @@ export function addSymbolsAndCalls(
       });
     }
   }
-  return unresolvedCalls;
+  return { symbols, unresolvedCalls };
 }
 
-export function resolveTarget(node: Node, graph: GraphParts): string | null {
-  const ids = new Set(
-    graph.nodes
-      .filter((item) => item.kind && item.kind !== "file")
-      .map((item) => item.id),
-  );
+export function resolveTarget(
+  node: Node,
+  context: SymbolContext,
+): string | null {
+  if (!mayResolve(node, context.names)) return null;
   const targets = [
     ...new Set(
       (unalias(node.getSymbol())?.getDeclarations() ?? [])
         .map(symbolId)
-        .filter((id) => ids.has(id)),
+        .filter((id) => context.symbols.ids.has(id)),
     ),
   ];
   return targets.length === 1 ? targets[0] : null;
 }
-export function ownerId(node: Node, graph: GraphParts): string {
-  const ids = new Set(
-    graph.nodes
-      .filter((item) => item.kind === "function" || item.kind === "method")
-      .map((item) => item.id),
-  );
+export function ownerId(node: Node, context: SymbolContext): string {
   let current: Node | undefined = node.getParent();
   while (current && !Node.isSourceFile(current)) {
     const id = symbolId(current);
-    if (ids.has(id)) return id;
+    if (context.symbols.owners.has(id)) return id;
     current = current.getParent();
   }
-  return relative(node.getSourceFile());
+  return relative(node);
 }

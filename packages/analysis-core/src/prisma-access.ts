@@ -1,9 +1,9 @@
-import { Node, SyntaxKind, type Project } from "ts-morph";
+import { Node, SyntaxKind } from "ts-morph";
 import {
   addNode,
   evidence,
   relative,
-  type GraphParts,
+  type SymbolContext,
 } from "./framework-graph";
 import { ownerId, unalias } from "./symbols-and-calls";
 const operations = new Set([
@@ -51,14 +51,10 @@ function prismaClient(
   }
   return null;
 }
-export function addPrismaAccess(
-  project: Project,
-  paths: Set<string>,
-  graph: GraphParts,
-): void {
-  for (const path of paths) {
-    const source = project.getSourceFileOrThrow(`/workspace/${path}`);
-    for (const call of source.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+export function addPrismaAccess(context: SymbolContext): void {
+  const { graph } = context;
+  for (const { calls } of context.sources) {
+    for (const call of calls) {
       const expression = call.getExpression();
       if (
         !Node.isPropertyAccessExpression(expression) ||
@@ -81,7 +77,7 @@ export function addPrismaAccess(
       );
       graph.edges.push({
         id: `${id}:access`,
-        source: ownerId(call, graph),
+        source: ownerId(call, context),
         target: id,
         kind: "database-access",
         confidence: "framework",

@@ -1,26 +1,18 @@
-import { Node, SyntaxKind, type Project } from "ts-morph";
-import { evidence, type GraphParts } from "./framework-graph";
+import { Node } from "ts-morph";
+import { evidence, type SymbolContext } from "./framework-graph";
 import { ownerId, resolveTarget } from "./symbols-and-calls";
-import { addManifestEvidence, findReactManifest } from "./next-manifest";
-import type { AnalyzerFile } from "./analyze-files";
+import { addManifestEvidence } from "./next-manifest";
 
-export function addReactEvents(
-  project: Project,
-  paths: Set<string>,
-  graph: GraphParts,
-  files: AnalyzerFile[],
-): void {
-  for (const path of paths) {
+export function addReactEvents(context: SymbolContext): void {
+  const { graph, manifests } = context;
+  for (const { path, source, jsxAttributes } of context.sources) {
     if (!/\.[jt]sx$/i.test(path)) continue;
-    const source = project.getSourceFileOrThrow(`/workspace/${path}`);
     const reactImport = source
       .getImportDeclarations()
       .find((declaration) => declaration.getModuleSpecifierValue() === "react");
-    const manifest = reactImport ? null : findReactManifest(path, files);
+    const manifest = reactImport ? null : manifests.react(path);
     if (!reactImport && !manifest) continue;
-    for (const attribute of source.getDescendantsOfKind(
-      SyntaxKind.JsxAttribute,
-    )) {
+    for (const attribute of jsxAttributes) {
       if (!/^on[A-Z]/.test(attribute.getNameNode().getText())) continue;
       const initializer = attribute.getInitializer();
       const expression =
@@ -35,8 +27,8 @@ export function addReactEvents(
         )
       )
         continue;
-      const sourceId = ownerId(attribute, graph),
-        target = resolveTarget(expression, graph);
+      const sourceId = ownerId(attribute, context);
+      const target = resolveTarget(expression, context);
       if (!target || sourceId === target || sourceId === path) continue;
       const evidenceId = evidence(attribute, graph);
       const supportingEvidenceId = reactImport
