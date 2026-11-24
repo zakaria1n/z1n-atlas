@@ -4,7 +4,7 @@
 
 Z1N Atlas is a read-only application for exploring source code through a relationship graph and evidence. You can import a bounded selection from a public GitHub repository or choose a local folder, browse the selected files, inspect source, and analyze supported TypeScript/JavaScript relationships.
 
-The analyzer resolves imports, re-exports, root TypeScript path aliases, selected symbols and static calls. It also identifies literal `fetch` requests and simple Express routes, including a single router mount. HTTP matches are **heuristic**; static relations are not runtime traces. Dynamic URLs, configuration inheritance, external packages, many framework patterns, database access and runtime behavior are not fully resolved. Unresolved references are reported. AI provider settings, chat and Feature Journey are planned and not yet available.
+The analyzer resolves imports, re-exports, root TypeScript path aliases, selected symbols and static calls. It also identifies literal `fetch` requests, simple Express routes with a single router mount, static Next.js App Router endpoints and selected Prisma Client operations. HTTP matches are **heuristic**; static relations are not runtime traces. Dynamic URLs, configuration inheritance, external packages, many framework patterns, other database libraries and runtime behavior are not fully resolved. Unresolved references are reported. AI provider settings, chat and Feature Journey are planned and not yet available.
 
 ## Architecture
 

@@ -36,7 +36,16 @@ const files = [
     content:
       'import {insert} from "./repo"; export function save(){ return insert(); }',
   },
-  { path: "src/repo.ts", content: "export function insert(){ return 1; }" },
+  {
+    path: "src/repo.ts",
+    content:
+      'import {db} from "./db"; export function insert(){return db.user.create({data:{name:"A"}});}',
+  },
+  {
+    path: "src/db.ts",
+    content:
+      'import {PrismaClient} from "@prisma/client"; export const db = new PrismaClient();',
+  },
 ];
 describe("full-stack HTTP evidence", () => {
   it("connects a literal fetch to a mounted Express route as a heuristic with both sources", () => {
@@ -67,6 +76,19 @@ describe("full-stack HTTP evidence", () => {
     expect(calls).toContainEqual(["Form", "createUser"]);
     expect(calls).toContainEqual(["create", "save"]);
     expect(calls).toContainEqual(["save", "insert"]);
+    const form = graph.nodes.find((n) => n.name === "Form")!;
+    const next = (id: string, kind: string) =>
+      graph.edges.find((e) => e.source === id && e.kind === kind)!;
+    const client = next(form.id, "calls").target;
+    const request = next(client, "requests").target;
+    const route = next(request, "http-route").target;
+    const controller = next(route, "handles").target;
+    const service = next(controller, "calls").target;
+    const repository = next(service, "calls").target;
+    const database = next(repository, "database-access").target;
+    expect(graph.nodes.find((n) => n.id === database)?.name).toBe(
+      "Prisma user.create",
+    );
   });
   it("does not connect an unmatched method or a dynamic URL", () => {
     const modified = files.map((file) =>

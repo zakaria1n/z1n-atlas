@@ -1,57 +1,16 @@
 import { Node, SyntaxKind, type CallExpression, type Project } from "ts-morph";
-import type { GraphEdge, GraphEvidence, GraphNode } from "@z1n/contracts";
+import {
+  addNode,
+  evidence,
+  relative,
+  type GraphParts as Parts,
+  type HttpRoute as Route,
+} from "./framework-graph";
+import { addNextRoutes } from "./next-routes";
 import { ownerId, resolveTarget, symbolId, unalias } from "./symbols-and-calls";
 
-type Parts = {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  evidence: GraphEvidence[];
-};
-type Route = {
-  nodeId: string;
-  path: string;
-  method: string;
-  evidenceId: string;
-  mountEvidenceId?: string;
-};
-function relative(node: Node): string {
-  return node
-    .getSourceFile()
-    .getFilePath()
-    .replace(/^\/workspace\//, "");
-}
 function literal(node: Node | undefined): string | null {
   return node && Node.isStringLiteral(node) ? node.getLiteralValue() : null;
-}
-function evidence(node: Node, graph: Parts): string {
-  const filePath = relative(node),
-    id = `${filePath}:${node.getStart()}:${node.getEnd()}:framework`;
-  if (!graph.evidence.some((item) => item.id === id))
-    graph.evidence.push({
-      id,
-      filePath,
-      startLine: node.getStartLineNumber(),
-      endLine: node.getEndLineNumber(),
-      snippet: node.getText(),
-    });
-  return id;
-}
-function addNode(
-  node: Node,
-  id: string,
-  name: string,
-  kind: "route" | "http-call",
-  graph: Parts,
-): void {
-  graph.nodes.push({
-    id,
-    path: relative(node),
-    exports: [],
-    kind,
-    name,
-    startLine: node.getStartLineNumber(),
-    endLine: node.getEndLineNumber(),
-  });
 }
 function importedFromExpress(node: Node, name: "default" | "Router"): boolean {
   if (!Node.isIdentifier(node)) return false;
@@ -152,7 +111,9 @@ export function addHttpRelationships(
       list.push({ prefix, call });
     mounts.set(target, list);
   }
-  const routes: Route[] = [];
+  const nextRoutes = addNextRoutes(project, paths, graph);
+  const routes: Route[] = nextRoutes.routes;
+  unresolved += nextRoutes.unresolved;
   for (const call of calls) {
     const pc = propertyCall(call);
     if (!pc || !["get", "post", "put", "patch", "delete"].includes(pc.method))

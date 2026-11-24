@@ -72,7 +72,15 @@ export const graphNodeSchema = z.object({
   path: z.string(),
   exports: z.array(z.string()),
   kind: z
-    .enum(["file", "function", "method", "class", "route", "http-call"])
+    .enum([
+      "file",
+      "function",
+      "method",
+      "class",
+      "route",
+      "http-call",
+      "database",
+    ])
     .optional(),
   name: z.string().optional(),
   startLine: z.number().int().positive().optional(),
@@ -91,6 +99,7 @@ export const graphEdgeSchema = z.object({
     "requests",
     "http-route",
     "handles",
+    "database-access",
   ]),
   confidence: z.enum(["confirmed", "framework", "heuristic"]),
   evidenceId: z.string(),

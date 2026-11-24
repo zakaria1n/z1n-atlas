@@ -3,6 +3,7 @@ import {
   SyntaxKind,
   type SourceFile as MorphSourceFile,
 } from "ts-morph";
+import { addPrismaAccess } from "./prisma-access";
 import { addHttpRelationships } from "./http-relationships";
 import { addSymbolsAndCalls } from "./symbols-and-calls";
 import { compilerOptions } from "./compiler-options";
@@ -109,6 +110,7 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
       ).length;
   }
   addSymbolsAndCalls(project, paths, { nodes, edges, evidence });
+  addPrismaAccess(project, paths, { nodes, edges, evidence });
   unresolved += addHttpRelationships(project, paths, {
     nodes,
     edges,
@@ -119,6 +121,6 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
     edges,
     evidence,
     unresolved,
-    notice: `Static imports and re-exports only. Resolved static calls and bounded Express/fetch candidates are included; HTTP matches are heuristic and static relationships are not runtime traces. ${configNotice}`,
+    notice: `Static imports, references, resolved calls, selected Express and Next.js routes, literal fetch requests and recognized Prisma access are included. HTTP matches are heuristic; static relationships are not runtime traces. Dynamic routes, dynamic URLs and dispatch may be unresolved. ${configNotice}`,
   };
 }
