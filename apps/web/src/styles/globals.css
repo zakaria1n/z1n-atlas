@@ -675,6 +675,18 @@ button:disabled {
   padding: 0.4rem;
   color: #174eb5;
 }
+.relations-filter {
+  display: block;
+  margin: 0.25rem 0;
+}
+.relations-filter input {
+  width: 100%;
+  padding: 0.4rem;
+  border: 1px solid #94a3b8;
+  border-radius: 0.3rem;
+  background: white;
+  color: var(--ink);
+}
 .graph-evidence {
   position: absolute;
   right: 1rem;

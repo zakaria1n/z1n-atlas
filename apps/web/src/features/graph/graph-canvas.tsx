@@ -10,7 +10,7 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { CodeGraph, GraphEdge, Journey } from "@z1n/contracts";
+import type { CodeGraph, GraphEdge, GraphNode, Journey } from "@z1n/contracts";
 import type { RepositorySession } from "@/features/repository-import/repository-session";
 import { JourneyPanel } from "./journey-panel";
 
@@ -19,6 +19,15 @@ type Props = {
   session: RepositorySession;
   onOpenFile: (path: string, line?: number) => void;
 };
+// Up to these sizes a graph stays readable with every edge labelled and the
+// whole relationship list available. Beyond them, labels and the list are
+// narrowed because a large selection would otherwise mount tens of thousands
+// of elements that no one can read.
+const LABELLED_EDGE_LIMIT = 400;
+const COMPACT_NODE_LIMIT = 150;
+const RELATIONSHIP_PAGE = 100;
+const isFile = (node: GraphNode) => !node.kind || node.kind === "file";
+
 export function GraphCanvas({ graph, session, onOpenFile }: Props) {
   const [mobile, setMobile] = useState(false);
   useEffect(() => {
@@ -44,20 +53,42 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
   }, [view]);
   const [selected, setSelected] = useState<GraphEdge | null>(null);
   const [journey, setJourney] = useState<Journey | null>(null);
+  const [relationshipQuery, setRelationshipQuery] = useState("");
   const byId = useMemo(
     () => new Map(graph.nodes.map((node) => [node.id, node])),
     [graph],
   );
+  // Files in path order, each followed by the symbols declared in it, so that
+  // a file and its symbols are neighbours on the grid and their edges short.
+  const files = useMemo(() => graph.nodes.filter(isFile), [graph]);
+  const ordered = useMemo(() => {
+    const symbols = new Map<string, GraphNode[]>();
+    for (const node of graph.nodes)
+      if (!isFile(node)) {
+        const group = symbols.get(node.path);
+        if (group) group.push(node);
+        else symbols.set(node.path, [node]);
+      }
+    return files.flatMap((file) => [file, ...(symbols.get(file.path) ?? [])]);
+  }, [graph, files]);
+  const journeyNodes = useMemo(
+    () => new Set(journey?.nodeIds ?? []),
+    [journey],
+  );
+  const journeyEdges = useMemo(
+    () => new Set(journey?.edgeIds ?? []),
+    [journey],
+  );
   const visibleNodes = useMemo(
     () =>
       view === "files"
-        ? graph.nodes.filter((node) => !node.kind || node.kind === "file")
+        ? files
         : view === "journey"
           ? (journey?.nodeIds
               .map((id) => byId.get(id))
               .filter((node) => node !== undefined) ?? [])
-          : graph.nodes,
-    [graph, view, journey, byId],
+          : ordered,
+    [files, ordered, view, journey, byId],
   );
   const visible = useMemo(() => {
     const ids = new Set(visibleNodes.map((node) => node.id));
@@ -65,25 +96,41 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
       (edge) =>
         ids.has(edge.source) &&
         ids.has(edge.target) &&
-        (view !== "journey" || journey?.edgeIds.includes(edge.id)) &&
+        (view !== "journey" || journeyEdges.has(edge.id)) &&
         (filter === "all" || edge.kind === filter),
     );
-  }, [graph, filter, visibleNodes, view, journey]);
+  }, [graph, filter, visibleNodes, view, journeyEdges]);
+  // A dense grid keeps large graphs from becoming an extremely tall column.
+  const columns =
+    visibleNodes.length <= COMPACT_NODE_LIMIT
+      ? mobile
+        ? 2
+        : 5
+      : Math.min(
+          80,
+          Math.max(5, Math.round(Math.sqrt(visibleNodes.length * 1.6))),
+        );
+  const labelled = visible.length <= LABELLED_EDGE_LIMIT;
+  const labelOf = useMemo(() => {
+    const label = (id: string) =>
+      byId.get(id)?.name ?? byId.get(id)?.path ?? id;
+    return label;
+  }, [byId]);
   const nodes = useMemo<Node[]>(
     () =>
       visibleNodes.map((node, index) => ({
         id: node.id,
         position: {
-          x: (index % (mobile ? 2 : 5)) * 230,
-          y: Math.floor(index / (mobile ? 2 : 5)) * 130,
+          x: (index % columns) * 230,
+          y: Math.floor(index / columns) * 130,
         },
         data: { label: node.name ? `${node.name} · ${node.path}` : node.path },
         ariaLabel: `${node.kind ?? "file"}: ${node.name ?? node.path}`,
-        style: journey?.nodeIds.includes(node.id)
+        style: journeyNodes.has(node.id)
           ? { border: "3px solid #c2410c", background: "#fff7ed" }
           : undefined,
       })),
-    [visibleNodes, mobile, journey],
+    [visibleNodes, columns, journeyNodes],
   );
   const edges = useMemo<Edge[]>(
     () =>
@@ -91,20 +138,35 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
         id: edge.id,
         source: edge.source,
         target: edge.target,
-        label: edge.kind,
+        label: labelled ? edge.kind : undefined,
+        ariaLabel: `${edge.kind} from ${labelOf(edge.source)} to ${labelOf(edge.target)}`,
         markerEnd: { type: MarkerType.ArrowClosed },
         style: {
-          stroke: journey?.edgeIds.includes(edge.id)
+          stroke: journeyEdges.has(edge.id)
             ? "#c2410c"
             : edge.confidence === "heuristic"
               ? "#b45309"
               : "#2563eb",
-          strokeWidth: journey?.edgeIds.includes(edge.id) ? 4 : 1.5,
+          strokeWidth: journeyEdges.has(edge.id) ? 4 : 1.5,
           strokeDasharray: edge.confidence === "heuristic" ? "5 5" : undefined,
         },
       })),
-    [visible, journey],
+    [visible, labelled, journeyEdges, labelOf],
   );
+  const listed = useMemo(() => {
+    const needle = relationshipQuery.trim().toLowerCase();
+    const matches = needle
+      ? visible.filter((edge) =>
+          `${labelOf(edge.source)} ${labelOf(edge.target)} ${edge.kind}`
+            .toLowerCase()
+            .includes(needle),
+        )
+      : visible;
+    return {
+      edges: matches.slice(0, RELATIONSHIP_PAGE),
+      total: matches.length,
+    };
+  }, [visible, relationshipQuery, labelOf]);
   const proofs = selected
     ? [selected.evidenceId, ...(selected.supportingEvidenceIds ?? [])]
         .map((id) => graph.evidence.find((item) => item.id === id))
@@ -146,6 +208,19 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           {graph.unresolved} unresolved imports or routes ·{" "}
           {graph.unresolvedCalls} unresolved calls
         </span>
+        {session.inventory &&
+          session.inventory.length > session.files.length && (
+            <span>
+              Analyzing {session.files.length} of {session.inventory.length}{" "}
+              indexed files; coverage is partial.
+            </span>
+          )}
+        {!labelled && (
+          <span>
+            Edge labels are hidden on this many relationships. Select an edge to
+            see its type.
+          </span>
+        )}
         <JourneyPanel
           session={session}
           graph={graph}
@@ -194,17 +269,30 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
         </details>
         <details>
           <summary>Inspect relationships ({visible.length})</summary>
+          <label className="relations-filter">
+            Filter relationships
+            <input
+              type="search"
+              value={relationshipQuery}
+              onChange={(event) => setRelationshipQuery(event.target.value)}
+              placeholder="Symbol, file or type"
+            />
+          </label>
           <ul className="relations">
-            {visible.map((edge) => (
+            {listed.edges.map((edge) => (
               <li key={edge.id}>
                 <button type="button" onClick={() => setSelected(edge)}>
-                  {byId.get(edge.source)?.name ?? byId.get(edge.source)?.path} →{" "}
-                  {byId.get(edge.target)?.name ?? byId.get(edge.target)?.path} ·{" "}
-                  {edge.kind}
+                  {labelOf(edge.source)} → {labelOf(edge.target)} · {edge.kind}
                 </button>
               </li>
             ))}
           </ul>
+          {listed.total > listed.edges.length && (
+            <p>
+              Showing {listed.edges.length} of {listed.total} relationships.
+              Type to narrow the list.
+            </p>
+          )}
         </details>
       </div>
       <ReactFlow
@@ -212,7 +300,7 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           flow.current = instance;
         }}
         forceColorMode="light"
-        minZoom={0.65}
+        minZoom={visibleNodes.length <= COMPACT_NODE_LIMIT ? 0.65 : 0.05}
         maxZoom={1.8}
         fitViewOptions={{ minZoom: 0.65, maxZoom: 0.9, padding: 0.15 }}
         nodes={nodes}
