@@ -13,6 +13,9 @@ import {
   providerTestResultSchema,
   chatRequestSchema,
   chatAnswerSchema,
+  journeyRequestSchema,
+  journeySchema,
+  graphIsValid,
 } from "@z1n/contracts";
 import {
   importGitHubRepository,
@@ -23,6 +26,7 @@ import { ProviderError } from "./providers/contracts";
 import { testModel } from "./providers/test-model";
 import { generateAnswer } from "./providers/generate-answer";
 import { answerQuestion } from "./evidence/answer";
+import { findJourney } from "./journey/find-journey";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 
 export async function createApp(
@@ -246,6 +250,37 @@ export async function createApp(
       return reply
         .code(502)
         .send({ error: "The answer could not be generated. Try again." });
+    } finally {
+      reply.raw.off("close", cancel);
+      active--;
+    }
+  });
+  app.post("/api/journeys", async (request, reply) => {
+    const input = journeyRequestSchema.safeParse(request.body);
+    if (!input.success)
+      return reply
+        .code(400)
+        .send({ error: "Invalid request or missing source-sharing consent." });
+    if (!canStart())
+      return reply
+        .code(429)
+        .send({ error: "Service is busy. Try again shortly." });
+    const abort = new AbortController();
+    const cancel = () => {
+      if (!reply.raw.writableEnded) abort.abort();
+    };
+    reply.raw.once("close", cancel);
+    try {
+      const graph = codeGraphSchema.parse(
+        await runAnalysis(input.data.files, 15_000, abort.signal),
+      );
+      if (!graphIsValid(graph, input.data.files))
+        throw new Error("Invalid graph.");
+      return journeySchema.parse(findJourney(input.data.goal, graph));
+    } catch {
+      return reply
+        .code(500)
+        .send({ error: "The journey could not be computed. Try again." });
     } finally {
       reply.raw.off("close", cancel);
       active--;

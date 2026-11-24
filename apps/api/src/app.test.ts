@@ -229,3 +229,34 @@ describe("chat HTTP boundary", () => {
     expect(response.body).not.toContain("fake-key");
   });
 });
+describe("journey HTTP boundary", () => {
+  it("requires local consent and returns an explicit unknown for an empty graph", async () => {
+    const isolated = await createApp();
+    try {
+      const payload = {
+        goal: "registration",
+        files: [{ path: "a.ts", content: "export const x = 1;" }],
+        origin: "local",
+        consent: false,
+      };
+      const invalid = await isolated.inject({
+        method: "POST",
+        url: "/api/journeys",
+        headers: { origin: "http://localhost:3000" },
+        payload,
+      });
+      expect(invalid.statusCode).toBe(400);
+      const response = await isolated.inject({
+        method: "POST",
+        url: "/api/journeys",
+        headers: { origin: "http://localhost:3000" },
+        payload: { ...payload, consent: true },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().nodeIds).toEqual([]);
+      expect(response.json().uncertainties.length).toBeGreaterThan(0);
+    } finally {
+      await isolated.close();
+    }
+  });
+});
