@@ -5,10 +5,13 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  { settings: { react: { version: "19.0" }, next: { rootDir: "apps/web/" } } },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
-    ".next/**",
+    "**/.next/**",
+    "**/dist/**",
+    "**/node_modules/**",
     ".analysis-build/**",
     "out/**",
     "build/**",

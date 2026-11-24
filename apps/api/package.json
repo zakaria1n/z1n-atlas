@@ -1,0 +1,22 @@
+{
+  "name": "@z1n/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "pnpm build && node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@z1n/contracts": "workspace:*",
+    "fastify": "^5.12.8",
+    "@fastify/cors": "^11.4.3",
+    "zod": "^4.6.7",
+    "@z1n/analysis-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5"
+  }
+}

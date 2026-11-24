@@ -2,11 +2,20 @@
 
 **Visualize. Explore. Understand.**
 
-Z1N Atlas is an application in development for exploring source code through a visual map and evidence-backed explanations. The application provides responsive welcome, import, settings, and empty workspace screens. It can read a bounded selection of source files from a public GitHub repository or a browser-selected local folder and browse the selected files with a read-only, syntax-highlighted inspector.
+Z1N Atlas is a read-only application for exploring source code through a relationship graph and evidence. You can import a bounded selection from a public GitHub repository or choose a local folder, browse the selected files, inspect source, and analyze supported TypeScript/JavaScript relationships.
 
-Code analysis, graph visualization, AI explanations, and feature journeys are **planned** and are not available yet. Imported source is kept in browser memory for the current app session; the workspace displays selected files without editing them.
+The analyzer resolves imports, re-exports, root TypeScript path aliases, selected symbols and static calls. It also identifies literal `fetch` requests and simple Express routes, including a single router mount. HTTP matches are **heuristic**; static relations are not runtime traces. Dynamic URLs, configuration inheritance, external packages, many framework patterns, database access and runtime behavior are not fully resolved. Unresolved references are reported. AI provider settings, chat and Feature Journey are planned and not yet available.
 
-## Getting started
+## Architecture
+
+- `apps/web`: Next.js frontend, file selection, inspector and graph.
+- `apps/api`: Fastify HTTP service for public GitHub import and isolated analysis.
+- `packages/contracts`: shared Zod HTTP schemas and evidence validation.
+- `packages/analysis-core`: TypeScript/JavaScript analysis using ts-morph and the TypeScript compiler.
+
+Analysis runs in a Node worker with a timeout and heap limit; the application does not execute or modify imported source. Source and graph results are kept in memory, not a database. Worker heap limits do not replace deployment-level resource limits.
+
+## Run locally
 
 Use Node.js 22.12 or newer and pnpm 11.
 
@@ -15,7 +24,22 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open http://localhost:3000. No environment variables are currently required.
+Open http://localhost:3000. The API listens on `127.0.0.1:4000` by default. `pnpm dev` builds shared packages before starting both processes. For production-style local execution:
+
+```sh
+pnpm build
+pnpm --filter @z1n/api start
+# In another terminal:
+pnpm --filter @z1n/web start
+```
+
+To use a different backend, set `NEXT_PUBLIC_API_URL` in `apps/web/.env.local` before building or starting the web app. It must be an HTTPS origin, except HTTP is permitted for localhost. Configure `WEB_ORIGIN` on the API to the exact frontend origin; `HOST` and `PORT` control its listener. The API defaults to loopback and must not be exposed publicly without deployment-level authentication, distributed rate limiting and resource controls. Environment examples are in `.env.example`.
+
+## Privacy and limits
+
+Local selection is read in the browser. Before analysis the app displays the configured backend address and asks for explicit consent to send selected local files; a remote backend receives their contents. Browser selection does not grant the server filesystem access. The server processes the submitted contents in memory, without running project code. The selection is discarded on reload or tab closure.
+
+Imports are limited to 25 files, 100 KB per file and 1 MB total. Common secrets, generated directories and unsupported file types are excluded by path, but filters cannot detect every secret in source content. Review your selection before sharing. GitHub API rate limits may prevent imports. Per-process request limits are not a distributed rate limiter.
 
 ## Checks
 
@@ -27,14 +51,4 @@ pnpm format:check
 pnpm build
 ```
 
-Use `pnpm format` to format project files. The app uses Next.js App Router, React, TypeScript, Tailwind CSS, ESLint, Prettier, and Vitest. Routes live in `src/app`, shared layout components in `src/components`, and global design tokens in `src/styles`. Additional feature and server modules will be introduced when needed.
-
-## Principles
-
-The intended experience is read-only: imported projects should never be modified or executed. Provider key handling and source-sharing details will be documented when those capabilities are implemented.
-
-GitHub import reads only public default branches and enforces a maximum of 25 files, 100 KB per file, and 1 MB of source. It excludes common secret paths, generated directories, and unsupported file types; these filters cannot guarantee that source files contain no secrets. GitHub API rate limits may prevent imports. The per-process request limit is not a distributed rate limiter; production deployments need appropriate shared rate limiting.
-
-Local folder selection reads supported files in the browser without uploading them. The same limits and path exclusions apply. Files are held in memory across app navigation; reloading or closing the tab discards them. Browsers without a directory picker or directory file input cannot use local selection.
-
-The Node server includes an isolated, time-limited static analysis service. It is not yet connected to the workspace. The compiled worker is generated by the development, test, and build commands; production deployments must include the generated `.analysis-build` directory and Node dependencies. Worker heap limits do not replace deployment-level resource limits.
+The graph uses React Flow and the inspector uses Prism React Renderer. The analysis engine uses ts-morph; these packages are distributed under their respective open-source licenses.
