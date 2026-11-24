@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createApp } from "./app";
+import { generateAnswer } from "./providers/generate-answer";
 vi.mock("./analyzer/run-analysis", () => ({
   AnalysisError: class extends Error {},
   runAnalysis: vi.fn(async () => ({
@@ -230,6 +231,43 @@ describe("chat HTTP boundary", () => {
   });
 });
 describe("journey HTTP boundary", () => {
+  it("requires consent before AI evidence selection", async () => {
+    vi.mocked(generateAnswer).mockClear();
+    const isolated = await createApp();
+    try {
+      const payload = {
+        goal: "login",
+        files: [{ path: "a.ts", content: "export function login() {}" }],
+        origin: "local",
+        consent: true,
+        ai: {
+          provider: "openai",
+          apiKey: "fake-key",
+          model: "demo",
+          providerConsent: false,
+        },
+      };
+      const invalid = await isolated.inject({
+        method: "POST",
+        url: "/api/journeys",
+        headers: { origin: "http://localhost:3000" },
+        payload,
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(generateAnswer).not.toHaveBeenCalled();
+      const valid = await isolated.inject({
+        method: "POST",
+        url: "/api/journeys",
+        headers: { origin: "http://localhost:3000" },
+        payload: { ...payload, ai: { ...payload.ai, providerConsent: true } },
+      });
+      expect(valid.statusCode).toBe(200);
+      expect(generateAnswer).toHaveBeenCalledOnce();
+      expect(valid.body).not.toContain("fake-key");
+    } finally {
+      await isolated.close();
+    }
+  });
   it("requires local consent and returns an explicit unknown for an empty graph", async () => {
     const isolated = await createApp();
     try {

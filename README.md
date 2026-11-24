@@ -43,7 +43,7 @@ Provider keys are held in browser memory for the current tab and sent to the con
 
 For each assistant request, the app sends the selected files to the configured backend for analysis and bounded relevant excerpts to the selected AI provider after consent. Providers may retain submitted data according to their own policies. Only citations found in the analyzed selection are accepted, but a valid citation does not guarantee that the model's explanation is correct. The assistant can miss relevant evidence and is not a runtime trace. Requests may incur provider charges.
 
-Feature Journey sends the selection to the configured backend again with consent. It does not use an AI provider. Every displayed transition comes from the static graph; heuristic matches and missing boundaries are identified as uncertain. Ranking uses names and a bounded search rather than understanding the complete application.
+Feature Journey sends the selection to the configured backend again with consent. It can optionally send the question and relevant excerpts to the configured AI provider to help rank evidence; that option may incur charges. Every displayed transition comes from the static graph; heuristic matches and missing boundaries are identified as uncertain. Ranking uses names, optional AI-selected evidence and a bounded search rather than understanding the complete application.
 
 Imports are limited to 25 files, 100 KB per file and 1 MB total. Common secrets, generated directories and unsupported file types are excluded by path, but filters cannot detect every secret in source content. Review your selection before sharing. GitHub API rate limits may prevent imports. Per-process request limits are not a distributed rate limiter.
 

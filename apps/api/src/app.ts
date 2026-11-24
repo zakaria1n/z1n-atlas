@@ -282,8 +282,42 @@ export async function createApp(
       );
       if (!graphIsValid(graph, input.data.files))
         throw new Error("Invalid graph.");
-      return journeySchema.parse(findJourney(input.data.goal, graph));
-    } catch {
+      let paths: string[] = [];
+      if (input.data.ai) {
+        const { provider, apiKey, model } = input.data.ai;
+        const answer = await answerQuestion(
+          input.data.goal,
+          input.data.files,
+          graph,
+          (context) =>
+            generateAnswer({ provider, apiKey, model }, context, abort.signal),
+        );
+        paths = [
+          ...new Set(
+            answer.claims.flatMap((claim) =>
+              claim.citations.map((citation) => citation.filePath),
+            ),
+          ),
+        ].slice(0, 10);
+      }
+      const journey = findJourney(input.data.goal, graph, paths);
+      if (input.data.ai && !paths.length)
+        journey.uncertainties.push(
+          "AI did not select validated evidence; this path was ranked by names alone.",
+        );
+      return journeySchema.parse(journey);
+    } catch (error) {
+      if (error instanceof ProviderError) {
+        const status =
+          error.code === "INVALID_KEY"
+            ? 401
+            : error.code === "FORBIDDEN"
+              ? 403
+              : error.code === "RATE_LIMIT"
+                ? 429
+                : 502;
+        return reply.code(status).send({ error: error.message });
+      }
       return reply
         .code(500)
         .send({ error: "The journey could not be computed. Try again." });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { analysisRequestSchema, sourceFileSchema } from "./http";
+import { providerTestRequestSchema } from "./providers";
 import type { CodeGraph } from "./graph/contracts";
 export const journeyRequestSchema = z
   .object({
@@ -7,6 +8,9 @@ export const journeyRequestSchema = z
     files: z.array(sourceFileSchema).max(25),
     origin: z.enum(["github", "local"]),
     consent: z.boolean(),
+    ai: providerTestRequestSchema
+      .extend({ providerConsent: z.literal(true) })
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

@@ -3,6 +3,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { CodeGraph, GraphEdge, Journey } from "@z1n/contracts";
 import type { RepositorySession } from "@/features/repository-import/repository-session";
 import { apiOriginLabel, requestJourney } from "@/lib/api-client";
+import { useProviderSession } from "@/features/provider-settings/provider-session";
+import Link from "next/link";
 
 const descriptions: Partial<Record<GraphEdge["kind"], string>> = {
   calls: "A static call links these symbols.",
@@ -28,13 +30,15 @@ export function JourneyPanel({
 }) {
   const [goal, setGoal] = useState("");
   const [consent, setConsent] = useState(false);
+  const [useAi, setUseAi] = useState(false);
+  const { session: provider } = useProviderSession();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const pending = useRef<AbortController | null>(null);
   useEffect(() => () => pending.current?.abort(), []);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!consent) return;
+    if (!consent || (useAi && (!provider.apiKey || !provider.model))) return;
     pending.current?.abort();
     const controller = new AbortController();
     pending.current = controller;
@@ -48,6 +52,16 @@ export function JourneyPanel({
           origin: session.origin,
           consent: true,
           files: session.files.map(({ path, content }) => ({ path, content })),
+          ...(useAi
+            ? {
+                ai: {
+                  provider: provider.provider,
+                  apiKey: provider.apiKey,
+                  model: provider.model,
+                  providerConsent: true as const,
+                },
+              }
+            : {}),
         },
         graph,
         controller.signal,
@@ -71,8 +85,8 @@ export function JourneyPanel({
     <details className="journey-panel">
       <summary>Feature Journey</summary>
       <p>
-        Find a candidate path by symbol, file or feature name. This uses the
-        static graph without an AI request.
+        Find a candidate path by symbol, file or feature name. Paths always use
+        evidence from the static graph.
       </p>
       <form onSubmit={submit}>
         <label htmlFor="journey-goal">Feature or symbol</label>
@@ -94,6 +108,28 @@ export function JourneyPanel({
             Send the selected files again to {apiOriginLabel()} for analysis.
           </span>
         </label>
+        {provider.apiKey && provider.model ? (
+          <label className="assistant-consent">
+            <input
+              type="checkbox"
+              checked={useAi}
+              onChange={(event) => setUseAi(event.target.checked)}
+            />
+            <span>
+              Use the selected AI provider to help rank evidence. Relevant
+              excerpts and the question will be sent to that provider and may
+              incur charges.
+            </span>
+          </label>
+        ) : (
+          <p>
+            Optional AI-assisted ranking requires a provider and model in{" "}
+            <Link href="/settings" className="text-link">
+              Settings
+            </Link>
+            .
+          </p>
+        )}
         <div className="provider-actions">
           <button
             className="button provider-submit"

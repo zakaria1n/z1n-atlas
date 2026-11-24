@@ -27,7 +27,11 @@ const stop = new Set([
   "with",
   "from",
 ]);
-export function findJourney(goal: string, graph: CodeGraph): Journey {
+export function findJourney(
+  goal: string,
+  graph: CodeGraph,
+  evidencePaths: string[] = [],
+): Journey {
   const terms = [...new Set(goal.toLowerCase().match(/[a-z0-9_$]{3,}/g) ?? [])]
     .filter((word) => !stop.has(word))
     .slice(0, 8);
@@ -42,7 +46,8 @@ export function findJourney(goal: string, graph: CodeGraph): Journey {
     .filter(
       (node) =>
         node.kind !== "file" &&
-        terms.some((term) => text(node.id).includes(term)),
+        (terms.some((term) => text(node.id).includes(term)) ||
+          evidencePaths.includes(node.path)),
     )
     .slice(0, 60);
   const outgoing = new Map<string, GraphEdge[]>();
@@ -71,10 +76,17 @@ export function findJourney(goal: string, graph: CodeGraph): Journey {
   function visit(nodes: string[], edges: GraphEdge[]) {
     if (++explored > 10_000) return;
     const names = nodes.map(text).join(" ");
-    const relevance = terms.reduce(
-      (sum, term) => sum + (names.includes(term) ? 1 : 0),
-      0,
-    );
+    const relevance =
+      terms.reduce((sum, term) => sum + (names.includes(term) ? 1 : 0), 0) +
+      Math.min(
+        3,
+        new Set(
+          nodes
+            .map((id) => nodeMap.get(id)?.path)
+            .filter((path) => path && evidencePaths.includes(path)),
+        ).size,
+      ) *
+        2;
     if (relevance) {
       const score =
         relevance * 10 +
@@ -106,7 +118,9 @@ export function findJourney(goal: string, graph: CodeGraph): Journey {
     };
   const chosen: { nodes: string[]; edges: GraphEdge[]; score: number } = best;
   const uncertainties = [
-    "This is a candidate static path selected by names; it is not a verified runtime trace and may be incomplete.",
+    evidencePaths.length
+      ? "This candidate static path was ranked using names and AI-selected source evidence; it is not a verified runtime trace and may be incomplete."
+      : "This is a candidate static path selected by names; it is not a verified runtime trace and may be incomplete.",
   ];
   if (chosen.edges.some((edge) => edge.confidence === "heuristic"))
     uncertainties.push(

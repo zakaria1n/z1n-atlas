@@ -49,6 +49,18 @@ const files = [
   },
 ];
 describe("feature journey selection", () => {
+  it("uses evidence-selected files only as ranking hints for real graph paths", () => {
+    const graph = analyzeFiles(files);
+    const journey = findJourney("payment", graph, ["src/ui.tsx"]);
+    expect(journeyIsValid(journey, graph)).toBe(true);
+    expect(journey.nodeIds.length).toBeGreaterThan(1);
+    expect(journey.uncertainties.join()).toContain(
+      "AI-selected source evidence",
+    );
+    expect(
+      journey.edgeIds.every((id) => graph.edges.some((edge) => edge.id === id)),
+    ).toBe(true);
+  });
   it("selects a real path from React through Express to Prisma with a heuristic warning", () => {
     const graph = analyzeFiles(files);
     const journey = findJourney("How does user registration work?", graph);

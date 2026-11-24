@@ -19,7 +19,7 @@ const files: Record<string, string> = {
 };
 test("imports local source, analyzes a real graph, follows a journey and opens a chat citation", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.addInitScript((fixture) => {
     Object.defineProperty(window, "showDirectoryPicker", {
       configurable: true,
@@ -101,6 +101,9 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   ).toBeVisible();
   await expect(page.getByLabel("Graph scope")).toHaveValue("files");
   await page.getByText("Feature Journey", { exact: true }).click();
+  await expect(
+    page.getByLabel(/Use the selected AI provider to help rank evidence/),
+  ).toBeVisible();
   await page.getByLabel("Feature or symbol").fill("user registration");
   await page.getByLabel(/Send the selected files again/).check();
   await page.getByRole("button", { name: "Find path" }).click();
@@ -114,6 +117,10 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   await expect(
     page.getByText("The request and route are a possible match."),
   ).toBeVisible();
+  if (testInfo.project.name === "desktop") {
+    await page.addStyleTag({ content: "nextjs-portal { display: none; }" });
+    await page.screenshot({ path: testInfo.outputPath("journey.png") });
+  }
   await page.getByRole("button", { name: "src/controller.ts:1" }).click();
   await expect(
     page.getByRole("dialog", { name: "Code inspector" }),
