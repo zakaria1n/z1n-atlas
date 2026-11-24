@@ -122,8 +122,10 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   );
   await page.getByRole("button", { name: "Find path" }).click();
   expect((await journeyRequest).postDataJSON().analysisId).toBe(analysisId);
-  await expect(page.getByLabel("Graph scope")).toHaveValue("all");
+  await expect(page.getByLabel("Graph scope")).toHaveValue("journey");
   await expect(page.locator(".journey-steps > li")).toHaveCount(8);
+  await expect(page.locator(".react-flow__node")).toHaveCount(8);
+  await expect(page.locator(".react-flow__edge")).toHaveCount(7);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

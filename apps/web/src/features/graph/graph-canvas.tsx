@@ -29,7 +29,7 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
     return () => media.removeEventListener("change", update);
   }, []);
   const [filter, setFilter] = useState("all");
-  const [view, setView] = useState<"files" | "all">("files");
+  const [view, setView] = useState<"files" | "all" | "journey">("files");
   const flow = useRef<ReactFlowInstance | null>(null);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -52,8 +52,12 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
     () =>
       view === "files"
         ? graph.nodes.filter((node) => !node.kind || node.kind === "file")
-        : graph.nodes,
-    [graph, view],
+        : view === "journey"
+          ? (journey?.nodeIds
+              .map((id) => byId.get(id))
+              .filter((node) => node !== undefined) ?? [])
+          : graph.nodes,
+    [graph, view, journey, byId],
   );
   const visible = useMemo(() => {
     const ids = new Set(visibleNodes.map((node) => node.id));
@@ -61,9 +65,10 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
       (edge) =>
         ids.has(edge.source) &&
         ids.has(edge.target) &&
+        (view !== "journey" || journey?.edgeIds.includes(edge.id)) &&
         (filter === "all" || edge.kind === filter),
     );
-  }, [graph, filter, visibleNodes]);
+  }, [graph, filter, visibleNodes, view, journey]);
   const nodes = useMemo<Node[]>(
     () =>
       visibleNodes.map((node, index) => ({
@@ -149,8 +154,8 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
             setJourney(value);
             if (value) {
               setFilter("all");
-              setView("all");
-            }
+              if (value.nodeIds.length) setView("journey");
+            } else if (view === "journey") setView("files");
           }}
           onOpenFile={onOpenFile}
         />
@@ -159,12 +164,14 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           id="graph-scope"
           value={view}
           onChange={(event) => {
-            setView(event.target.value as "files" | "all");
-            setJourney(null);
+            setView(event.target.value as "files" | "all" | "journey");
           }}
         >
           <option value="files">Files</option>
           <option value="all">Files and symbols</option>
+          {journey && journey.nodeIds.length > 0 && (
+            <option value="journey">Current journey</option>
+          )}
         </select>
         <label htmlFor="edge-filter">Relationship type</label>
         <select

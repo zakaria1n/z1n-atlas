@@ -65,7 +65,7 @@ The browser smoke test starts both applications, analyzes a synthetic local proj
 
 1. Start both applications, choose **Explore**, and import the public [Z1N Atlas repository](https://github.com/zakaria1n/z1n-atlas).
 2. Open the workspace and analyze the selected files. The importer reports skipped files, so the resulting map is a partial view of the repository.
-3. Choose a file or relationship to inspect its source. Switch **Graph scope** to include symbols, or enter a name under **Feature Journey** to highlight a candidate static path.
+3. Choose a file or relationship to inspect its source. Switch **Graph scope** to include symbols, or enter a name under **Feature Journey** to focus on a candidate static path. Switch back to the full graph for context.
 4. Optionally select a provider and model in Settings to ask an evidence-linked question. Read the sharing notice before sending source excerpts to a provider.
 
 The screenshots show the running application. The journey example uses a synthetic React/Express/Prisma test project.
