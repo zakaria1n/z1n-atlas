@@ -8,6 +8,7 @@ import { addPrismaAccess } from "./prisma-access";
 import { addHttpRelationships } from "./http-relationships";
 import { addSymbolsAndCalls } from "./symbols-and-calls";
 import { compilerOptions } from "./compiler-options";
+import { addReactEvents } from "./react-events";
 import type { CodeGraph, GraphEvidence, GraphEdge } from "@z1n/contracts";
 
 export type AnalyzerFile = { path: string; content: string };
@@ -115,6 +116,7 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
     edges,
     evidence,
   });
+  addReactEvents(project, paths, { nodes, edges, evidence }, files);
   unresolved += addNextEntrypoints(project, paths, files, {
     nodes,
     edges,
@@ -132,6 +134,6 @@ export function analyzeFiles(files: AnalyzerFile[]): CodeGraph {
     evidence,
     unresolved,
     unresolvedCalls,
-    notice: `Static imports, references, resolved calls, Next.js page entries, selected Express and Next.js routes, literal fetch requests and recognized Prisma access are included. HTTP matches are heuristic; static relationships are not runtime traces. Dynamic routes, dynamic URLs and dispatch may be unresolved. ${configNotice}`,
+    notice: `Static imports, references, resolved calls, recognized React event attributes, Next.js page entries, selected Express and Next.js routes, literal fetch requests and recognized Prisma access are included. HTTP matches are heuristic; static relationships are not runtime traces. Dynamic routes, dynamic URLs and dispatch may be unresolved. ${configNotice}`,
   };
 }

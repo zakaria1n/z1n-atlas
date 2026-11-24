@@ -11,6 +11,7 @@ const descriptions: Partial<Record<GraphEdge["kind"], string>> = {
   requests: "This code contains an HTTP request.",
   "http-route": "The request and route are a possible match.",
   handles: "The framework route points to this handler.",
+  "handles-event": "A React event attribute references this handler.",
   "database-access": "The source contains a supported database operation.",
   renders: "The framework convention links this entry to a page.",
 };

@@ -109,6 +109,7 @@ export const graphEdgeSchema = z.object({
     "requests",
     "http-route",
     "handles",
+    "handles-event",
     "database-access",
     "renders",
   ]),

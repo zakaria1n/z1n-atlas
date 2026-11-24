@@ -40,21 +40,34 @@ function namedDeclarations(source: SourceFile): Node[] {
         Node.isIdentifier(node.getNameNode()),
       );
     });
-  return [...functions, ...methods, ...classes, ...variables];
+  const properties = source
+    .getDescendantsOfKind(SyntaxKind.PropertyDeclaration)
+    .filter((node) => {
+      const initializer = node.getInitializer();
+      return Boolean(
+        initializer &&
+        (Node.isArrowFunction(initializer) ||
+          Node.isFunctionExpression(initializer)) &&
+        Node.isIdentifier(node.getNameNode()),
+      );
+    });
+  return [...functions, ...methods, ...classes, ...variables, ...properties];
 }
 function nameNode(node: Node): Node | undefined {
   if (
     Node.isFunctionDeclaration(node) ||
     Node.isMethodDeclaration(node) ||
     Node.isClassDeclaration(node) ||
-    Node.isVariableDeclaration(node)
+    Node.isVariableDeclaration(node) ||
+    Node.isPropertyDeclaration(node)
   )
     return node.getNameNode();
   return undefined;
 }
 function kind(node: Node): "function" | "method" | "class" {
   if (Node.isClassDeclaration(node)) return "class";
-  if (Node.isMethodDeclaration(node)) return "method";
+  if (Node.isMethodDeclaration(node) || Node.isPropertyDeclaration(node))
+    return "method";
   return "function";
 }
 export function unalias(

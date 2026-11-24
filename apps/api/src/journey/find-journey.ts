@@ -10,6 +10,7 @@ const allowed = new Set<GraphEdge["kind"]>([
   "requests",
   "http-route",
   "handles",
+  "handles-event",
   "database-access",
   "renders",
 ]);
@@ -37,6 +38,11 @@ export function findJourney(
     .slice(0, 8);
   if (terms.some((word) => /^(registration|register|signup)$/.test(word)))
     terms.push("user", "create", "register", "signup");
+  const intentTerms = [
+    ...new Set(
+      terms.map((term) => (term === "registration" ? "register" : term)),
+    ),
+  ].filter((term) => !["user", "create"].includes(term));
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]));
   const text = (id: string) => {
     const node = nodeMap.get(id);
@@ -88,8 +94,22 @@ export function findJourney(
       ) *
         2;
     if (relevance) {
+      const earlySymbols = nodes
+        .slice(0, 3)
+        .map((id) => nodeMap.get(id))
+        .filter(
+          (node) =>
+            node && ["function", "method", "class"].includes(node.kind ?? ""),
+        )
+        .map((node) => node!.name?.toLowerCase() ?? "");
+      const intentScore = intentTerms.reduce(
+        (sum, term) =>
+          sum + (earlySymbols.some((name) => name.includes(term)) ? 30 : 0),
+        0,
+      );
       const score =
         relevance * 10 +
+        intentScore +
         edges.length * 2 +
         (/\.(tsx|jsx)\b/.test(text(nodes[0])) ? 20 : 0) +
         (edges.some((edge) => edge.kind === "http-route") ? 5 : 0);

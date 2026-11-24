@@ -35,6 +35,7 @@ export type GraphEdge = {
     | "requests"
     | "http-route"
     | "handles"
+    | "handles-event"
     | "database-access"
     | "renders";
   confidence: "confirmed" | "framework" | "heuristic";

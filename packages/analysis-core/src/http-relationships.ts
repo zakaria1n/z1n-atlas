@@ -1,4 +1,11 @@
-import { Node, SyntaxKind, type CallExpression, type Project } from "ts-morph";
+import {
+  Node,
+  SyntaxKind,
+  VariableDeclarationKind,
+  type CallExpression,
+  type Project,
+  type VariableDeclaration,
+} from "ts-morph";
 import {
   addNode,
   evidence,
@@ -34,10 +41,31 @@ function importedFromExpress(node: Node, name: "default" | "Router"): boolean {
   });
 }
 function ownerDeclaration(node: Node): string | null {
-  const declaration = unalias(node.getSymbol())
-    ?.getDeclarations()
-    .find(Node.isVariableDeclaration);
-  return declaration ? symbolId(declaration) : null;
+  const seen = new Set<string>();
+  let current: Node | undefined = node;
+  for (let depth = 0; current && depth < 10; depth++) {
+    const declaration: VariableDeclaration | undefined = unalias(
+      current.getSymbol(),
+    )
+      ?.getDeclarations()
+      .find(Node.isVariableDeclaration);
+    if (!declaration) return null;
+    const id = symbolId(declaration);
+    if (seen.has(id)) return null;
+    seen.add(id);
+    const initializer: Node | undefined = declaration.getInitializer();
+    if (
+      initializer &&
+      Node.isIdentifier(initializer) &&
+      declaration.getVariableStatement()?.getDeclarationKind() ===
+        VariableDeclarationKind.Const
+    ) {
+      current = initializer;
+      continue;
+    }
+    return id;
+  }
+  return null;
 }
 function validPath(value: string): boolean {
   return (
@@ -89,17 +117,21 @@ export function addHttpRelationships(
     }
     calls.push(...source.getDescendantsOfKind(SyntaxKind.CallExpression));
   }
-  const mounts = new Map<string, { prefix: string; call: CallExpression }[]>();
+  const mounts = new Map<
+    string,
+    { prefix: string; parent: string; call: CallExpression }[]
+  >();
   for (const call of calls) {
     const pc = propertyCall(call),
       args = call.getArguments();
     if (
       !pc ||
       pc.method !== "use" ||
-      owners.get(ownerDeclaration(pc.owner) ?? "") !== "app"
+      !owners.has(ownerDeclaration(pc.owner) ?? "")
     )
       continue;
-    const prefix = literal(args[0]),
+    const parent = ownerDeclaration(pc.owner)!,
+      prefix = literal(args[0]),
       target = args[1] && ownerDeclaration(args[1]);
     if (
       !prefix ||
@@ -109,9 +141,38 @@ export function addHttpRelationships(
     )
       continue;
     const list = mounts.get(target) ?? [];
-    if (!list.some((item) => item.prefix === prefix))
-      list.push({ prefix, call });
+    if (!list.some((item) => item.prefix === prefix && item.parent === parent))
+      list.push({ prefix, parent, call });
     mounts.set(target, list);
+  }
+  function prefixesFor(
+    owner: string,
+    seen = new Set<string>(),
+    budget = { remaining: 1000 },
+  ): { prefix: string; calls: CallExpression[] }[] {
+    if (--budget.remaining < 0) {
+      if (budget.remaining === -1) unresolved++;
+      return [];
+    }
+    if (seen.has(owner) || seen.size >= 8) {
+      unresolved++;
+      return [];
+    }
+    if (owners.get(owner) === "app") return [{ prefix: "", calls: [] }];
+    const nextSeen = new Set(seen);
+    nextSeen.add(owner);
+    const results: { prefix: string; calls: CallExpression[] }[] = [];
+    for (const mount of mounts.get(owner) ?? [])
+      for (const parent of prefixesFor(mount.parent, nextSeen, budget)) {
+        const prefix = joinPath(parent.prefix, mount.prefix);
+        if (!results.some((item) => item.prefix === prefix))
+          results.push({ prefix, calls: [...parent.calls, mount.call] });
+        if (results.length >= 50) {
+          unresolved++;
+          return results;
+        }
+      }
+    return results;
   }
   const nextRoutes = addNextRoutes(project, paths, files, graph);
   const routes: Route[] = nextRoutes.routes;
@@ -129,10 +190,7 @@ export function addHttpRelationships(
       unresolved++;
       continue;
     }
-    const prefixes =
-      ownerType === "app"
-        ? [{ prefix: "", call: undefined }]
-        : (mounts.get(owner) ?? []);
+    const prefixes = prefixesFor(owner);
     if (!prefixes.length) {
       unresolved++;
       continue;
@@ -142,7 +200,7 @@ export function addHttpRelationships(
         filePath = relative(call),
         nodeId = `${filePath}#route:${call.getStart()}:${encodeURIComponent(route)}`,
         evidenceId = evidence(call, graph),
-        mountEvidenceId = mount.call ? evidence(mount.call, graph) : undefined;
+        mountEvidenceIds = mount.calls.map((item) => evidence(item, graph));
       addNode(
         call,
         nodeId,
@@ -158,14 +216,18 @@ export function addHttpRelationships(
         kind: "contains",
         confidence: "framework",
         evidenceId,
-        supportingEvidenceIds: mountEvidenceId ? [mountEvidenceId] : undefined,
+        supportingEvidenceIds: mountEvidenceIds.length
+          ? mountEvidenceIds
+          : undefined,
       });
       routes.push({
         nodeId,
         path: route,
         method: pc.method.toUpperCase(),
         evidenceId,
-        supportingEvidenceIds: mountEvidenceId ? [mountEvidenceId] : undefined,
+        supportingEvidenceIds: mountEvidenceIds.length
+          ? mountEvidenceIds
+          : undefined,
       });
       for (const handler of args.slice(1)) {
         const target = resolveTarget(handler, graph);
@@ -180,8 +242,8 @@ export function addHttpRelationships(
           kind: "handles",
           confidence: "framework",
           evidenceId,
-          supportingEvidenceIds: mountEvidenceId
-            ? [mountEvidenceId]
+          supportingEvidenceIds: mountEvidenceIds.length
+            ? mountEvidenceIds
             : undefined,
         });
       }

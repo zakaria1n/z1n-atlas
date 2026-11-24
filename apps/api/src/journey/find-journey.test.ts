@@ -49,6 +49,27 @@ const files = [
   },
 ];
 describe("feature journey selection", () => {
+  it("prefers a matching registered handler over an unrelated handler for the same endpoint", () => {
+    const changed = files.map((file) =>
+      file.path === "src/ui.tsx"
+        ? {
+            ...file,
+            content: `import React from 'react'; import {createUser} from '@/client'; export function Form(){ const handleRegister = () => createUser(); const demo = () => createUser(); return <><form onSubmit={handleRegister}/><button onClick={demo}/></>; }`,
+          }
+        : file,
+    );
+    const graph = analyzeFiles(changed);
+    const journey = findJourney("user registration", graph);
+    expect(journeyIsValid(journey, graph)).toBe(true);
+    expect(
+      journey.nodeIds
+        .slice(0, 2)
+        .map((id) => graph.nodes.find((node) => node.id === id)?.name),
+    ).toEqual(["Form", "handleRegister"]);
+    expect(
+      graph.edges.find((edge) => edge.id === journey.edgeIds[0])?.kind,
+    ).toBe("handles-event");
+  });
   it("uses evidence-selected files only as ranking hints for real graph paths", () => {
     const graph = analyzeFiles(files);
     const journey = findJourney("payment", graph, ["src/ui.tsx"]);
