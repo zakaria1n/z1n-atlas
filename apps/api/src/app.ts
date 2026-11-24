@@ -7,11 +7,15 @@ import {
   githubSnapshotSchema,
   parseGitHubRepository,
   repositoryUrlRequestSchema,
+  providerRequestSchema,
+  modelListSchema,
 } from "@z1n/contracts";
 import {
   importGitHubRepository,
   GitHubImportError,
 } from "./github/import-repository";
+import { createProviderAdapter } from "./providers/discovery";
+import { ProviderError } from "./providers/contracts";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 
 export async function createApp(
@@ -112,6 +116,50 @@ export async function createApp(
       active--;
     }
   });
+  app.post(
+    "/api/providers/models",
+    { bodyLimit: 4096 },
+    async (request, reply) => {
+      const input = providerRequestSchema.safeParse(request.body);
+      if (!input.success)
+        return reply
+          .code(400)
+          .send({ error: "Choose a provider and enter a valid API key." });
+      if (!canStart())
+        return reply
+          .code(429)
+          .send({ error: "Service is busy. Try again shortly." });
+      const abort = new AbortController();
+      const cancel = () => {
+        if (!reply.raw.writableEnded) abort.abort();
+      };
+      reply.raw.once("close", cancel);
+      try {
+        const result = await createProviderAdapter(
+          input.data.provider,
+        ).listModels(input.data.apiKey, abort.signal);
+        return modelListSchema.parse(result);
+      } catch (error) {
+        if (error instanceof ProviderError) {
+          const status =
+            error.code === "INVALID_KEY"
+              ? 401
+              : error.code === "FORBIDDEN"
+                ? 403
+                : error.code === "RATE_LIMIT"
+                  ? 429
+                  : 502;
+          return reply.code(status).send({ error: error.message });
+        }
+        return reply
+          .code(502)
+          .send({ error: "The provider could not complete the request." });
+      } finally {
+        reply.raw.off("close", cancel);
+        active--;
+      }
+    },
+  );
   app.setErrorHandler((error, _request, reply) => {
     const candidate =
       error && typeof error === "object" && "statusCode" in error

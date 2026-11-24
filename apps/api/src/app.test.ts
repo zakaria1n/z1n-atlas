@@ -22,6 +22,15 @@ vi.mock("./github/import-repository", () => ({
     truncated: false,
   })),
 }));
+vi.mock("./providers/discovery", () => ({
+  createProviderAdapter: () => ({
+    listModels: vi.fn(async () => ({
+      models: [{ id: "model-a", label: "Model A", compatibility: "candidate" }],
+      partial: false,
+      notice: "Access is not guaranteed.",
+    })),
+  }),
+}));
 let app: FastifyInstance;
 beforeAll(async () => {
   app = await createApp();
@@ -93,5 +102,31 @@ describe("repository HTTP boundary", () => {
     });
     expect(good.statusCode).toBe(200);
     expect(good.json().repository.url).toBe("https://github.com/example/repo");
+  });
+});
+
+describe("provider HTTP boundary", () => {
+  it("rejects missing keys and returns only normalized discovery data", async () => {
+    const headers = {
+      origin: "http://localhost:3000",
+      "content-type": "application/json",
+    };
+    const bad = await app.inject({
+      method: "POST",
+      url: "/api/providers/models",
+      headers,
+      payload: { provider: "openai", apiKey: "" },
+    });
+    expect(bad.statusCode).toBe(400);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/providers/models",
+      headers,
+      payload: { provider: "openai", apiKey: "test-key" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).not.toContain("test-key");
+    expect(response.json().models[0].id).toBe("model-a");
   });
 });
