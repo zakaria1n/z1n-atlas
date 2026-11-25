@@ -33,6 +33,8 @@ import { testModel } from "./providers/test-model";
 import { generateAnswer } from "./providers/generate-answer";
 import { answerQuestion } from "./evidence/answer";
 import { findJourney } from "./journey/find-journey";
+import { runJourneyAgent } from "./journey/agent";
+import { createJourneyAgentGenerate } from "./providers/journey-agent";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 import { createAnalysisCache } from "./analyzer/analysis-cache";
 import { createAnalysisJobs } from "./analyzer/analysis-jobs";
@@ -423,30 +425,24 @@ export async function createApp(
           await runAnalysis(input.data.files, { signal: abort.signal }),
           input.data.files,
         );
-      let paths: string[] = [];
       if (input.data.ai) {
+        // AI-guided mode: the model explores with controlled tools and every
+        // identifier it cites is validated against the graph.
         const { provider, apiKey, model } = input.data.ai;
-        const answer = await answerQuestion(
-          input.data.goal,
-          input.data.files,
+        const journey = await runJourneyAgent({
+          question: input.data.goal,
+          files: input.data.files,
           graph,
-          (context) =>
-            generateAnswer({ provider, apiKey, model }, context, abort.signal),
-        );
-        paths = [
-          ...new Set(
-            answer.claims.flatMap((claim) =>
-              claim.citations.map((citation) => citation.filePath),
-            ),
+          generate: createJourneyAgentGenerate(
+            { provider, apiKey, model },
+            fetch,
           ),
-        ].slice(0, 10);
+          signal: abort.signal,
+        });
+        return journeySchema.parse(journey);
       }
-      const journey = findJourney(input.data.goal, graph, paths);
-      if (input.data.ai && !paths.length)
-        journey.uncertainties.push(
-          "AI did not select validated evidence; this path was ranked by names alone.",
-        );
-      return journeySchema.parse(journey);
+      // Static mode: deterministic name-based exploration without a provider.
+      return journeySchema.parse(findJourney(input.data.goal, graph));
     } catch (error) {
       if (error instanceof AnalysisError)
         return reply.code(500).send({ error: error.message });

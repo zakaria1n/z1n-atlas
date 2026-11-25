@@ -82,6 +82,40 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
       },
     }),
   );
+  // The AI-guided journey is answered by a mock that only uses identifiers
+  // of the real analyzed graph; static requests go to the real backend.
+  const analysisGraph: {
+    nodes: { id: string; name?: string }[];
+    edges: { id: string; source: string; target: string; kind: string }[];
+  };
+  await page.route("**/api/journeys", async (route) => {
+    const payload = route.request().postDataJSON() as {
+      ai?: unknown;
+      analysisId?: string;
+    };
+    if (!payload.ai) return route.continue();
+    const form = analysisGraph.nodes.find((node) => node.name === "Form")!;
+    const link = analysisGraph.edges.find(
+      (edge) => edge.source === form.id && edge.kind === "calls",
+    )!;
+    const callee = analysisGraph.nodes.find((node) => node.id === link.target)!;
+    return route.fulfill({
+      status: 200,
+      headers: cors,
+      json: {
+        mode: "ai",
+        nodeIds: [form.id, callee.id],
+        edgeIds: [link.id],
+        uncertainties: [
+          "Mocked answer: a selected path is never a verified runtime trace.",
+        ],
+        explanations: [
+          { nodeId: form.id, text: "The form the user submits." },
+          { nodeId: callee.id, text: "Sends the request." },
+        ],
+      },
+    });
+  });
   await page.goto("/settings");
   await page.getByLabel("API key").fill("synthetic-key");
   await page.getByRole("button", { name: "Retrieve models" }).click();
@@ -103,34 +137,56 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
       (await response.json()).status === "complete",
   );
   await page.getByRole("button", { name: "Send and analyze" }).click();
-  const analysisId = (await (await analysisResponse).json()).graph
-    .analysisId as string;
+  const analysisJson = await (await analysisResponse).json();
+  const analysisId = analysisJson.graph.analysisId as string;
+  analysisGraph = analysisJson.graph;
   expect(analysisId).toBeTruthy();
   await expect(
     page.getByRole("region", { name: "Source relationship graph" }),
   ).toBeVisible();
   await expect(page.getByLabel("Graph scope")).toHaveValue("files");
   await page.getByText("Feature Journey", { exact: true }).click();
-  await expect(
-    page.getByLabel(/Use the selected AI provider to help rank evidence/),
-  ).toBeVisible();
-  await page.getByLabel("Feature or symbol").fill("user registration");
+  // A configured provider makes AI-guided the default exploration mode.
+  await expect(page.getByLabel("AI-guided.")).toBeChecked();
+  await expect(page.getByLabel("Static path.")).toBeVisible();
+  await page.getByLabel("Feature or question").fill("user registration");
   await page.getByLabel(/Send the selected files again/).check();
   const journeyRequest = page.waitForRequest(
     (request) =>
       request.url().endsWith("/api/journeys") && request.method() === "POST",
   );
   await page.getByRole("button", { name: "Find path" }).click();
-  expect((await journeyRequest).postDataJSON().analysisId).toBe(analysisId);
+  const journeyPayload = (await journeyRequest).postDataJSON();
+  expect(journeyPayload.analysisId).toBe(analysisId);
+  expect(journeyPayload.ai.model).toBe("demo");
   await expect(page.getByLabel("Graph scope")).toHaveValue("journey");
-  await expect(page.locator(".journey-steps > li")).toHaveCount(8);
-  await expect(page.locator(".react-flow__node")).toHaveCount(8);
-  await expect(page.locator(".react-flow__edge")).toHaveCount(7);
+  await expect(page.getByText("AI-guided journey")).toBeVisible();
+  await expect(page.getByText("The form the user submits.")).toBeVisible();
+  await expect(page.locator(".journey-steps > li")).toHaveCount(2);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  // The static mode passes through to the real backend, is explicitly
+  // labeled deterministic, and sends no provider data.
+  await page.getByLabel("Static path.").check();
+  const staticRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith("/api/journeys") && request.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Find path" }).click();
+  {
+    const payload = (await staticRequest).postDataJSON();
+    expect(payload.ai).toBeUndefined();
+    expect(payload.analysisId).toBe(analysisId);
+  }
+  await expect(page.locator(".journey-steps > li")).toHaveCount(8);
+  await expect(page.locator(".react-flow__node")).toHaveCount(8);
+  await expect(page.locator(".react-flow__edge")).toHaveCount(7);
+  await expect(
+    page.getByText("deterministic name ranking, not AI understanding"),
+  ).toBeVisible();
   await expect(
     page.getByText("The request and route are a possible match."),
   ).toBeVisible();

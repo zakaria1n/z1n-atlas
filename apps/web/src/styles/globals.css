@@ -664,6 +664,25 @@ button:disabled {
 .journey-steps p {
   margin: 0.2rem 0;
 }
+.journey-mode {
+  border: 0;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+.journey-mode legend {
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding-bottom: 0.3rem;
+}
+.journey-mode-badge {
+  font-weight: 700;
+  color: #174eb5;
+  margin: 0.4rem 0 0;
+}
+.journey-explanation {
+  color: #334155;
+  margin: 0.2rem 0;
+}
 .relations {
   list-style: none;
   padding: 0;

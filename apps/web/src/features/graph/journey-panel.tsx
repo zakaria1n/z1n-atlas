@@ -13,7 +13,7 @@ const descriptions: Partial<Record<GraphEdge["kind"], string>> = {
   handles: "The framework route points to this handler.",
   "handles-event": "A React event attribute references this handler.",
   "database-access": "The source contains a supported database operation.",
-  renders: "The framework convention links this entry to a page.",
+  renders: "A component renders this one, or a page renders this component.",
 };
 
 export function JourneyPanel({
@@ -31,15 +31,20 @@ export function JourneyPanel({
 }) {
   const [goal, setGoal] = useState("");
   const [consent, setConsent] = useState(false);
-  const [useAi, setUseAi] = useState(false);
-  const { session: provider } = useProviderSession();
+  const provider = useProviderSession().session;
+  const configured = Boolean(provider.apiKey && provider.model);
+  const [aiMode, setAiMode] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const pending = useRef<AbortController | null>(null);
   useEffect(() => () => pending.current?.abort(), []);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!consent || (useAi && (!provider.apiKey || !provider.model))) return;
+    if (
+      !consent ||
+      (aiMode && configured && (!provider.apiKey || !provider.model))
+    )
+      return;
     pending.current?.abort();
     const controller = new AbortController();
     pending.current = controller;
@@ -54,7 +59,7 @@ export function JourneyPanel({
           consent: true,
           analysisId: graph.analysisId,
           files: session.files.map(({ path, content }) => ({ path, content })),
-          ...(useAi
+          ...(aiMode && configured
             ? {
                 ai: {
                   provider: provider.provider,
@@ -83,15 +88,17 @@ export function JourneyPanel({
       }
     }
   }
+  const explanation = (id: string) =>
+    journey?.explanations?.find((item) => item.nodeId === id)?.text;
   return (
     <details className="journey-panel">
       <summary>Feature Journey</summary>
       <p>
-        Find a candidate path by symbol, file or feature name. Paths always use
-        evidence from the static graph.
+        Explain how a feature runs through the analyzed code. Every step cites
+        source evidence; nothing is shown that the graph does not contain.
       </p>
       <form onSubmit={submit}>
-        <label htmlFor="journey-goal">Feature or symbol</label>
+        <label htmlFor="journey-goal">Feature or question</label>
         <input
           id="journey-goal"
           maxLength={500}
@@ -100,6 +107,47 @@ export function JourneyPanel({
           value={goal}
           onChange={(event) => setGoal(event.target.value)}
         />
+        {configured ? (
+          <fieldset className="journey-mode">
+            <legend>Exploration mode</legend>
+            <label className="assistant-consent">
+              <input
+                type="radio"
+                name="journey-mode"
+                checked={aiMode}
+                onChange={() => setAiMode(true)}
+              />
+              <span>
+                <strong>AI-guided.</strong> {provider.provider} explores the
+                code with controlled tools. The question and relevant excerpts
+                are sent to the provider and may incur charges.
+              </span>
+            </label>
+            <label className="assistant-consent">
+              <input
+                type="radio"
+                name="journey-mode"
+                checked={!aiMode}
+                onChange={() => setAiMode(false)}
+              />
+              <span>
+                <strong>Static path.</strong> Deterministic ranking by symbol
+                and file names in the backend. No AI understanding, no provider
+                call.
+              </span>
+            </label>
+          </fieldset>
+        ) : (
+          <p>
+            <strong>Static path exploration.</strong> Deterministic ranking by
+            symbol and file names — not AI understanding. Configure a provider
+            in{" "}
+            <Link href="/settings" className="text-link">
+              Settings
+            </Link>{" "}
+            for AI-guided journeys.
+          </p>
+        )}
         <label className="assistant-consent">
           <input
             type="checkbox"
@@ -110,28 +158,6 @@ export function JourneyPanel({
             Send the selected files again to {apiOriginLabel()} for analysis.
           </span>
         </label>
-        {provider.apiKey && provider.model ? (
-          <label className="assistant-consent">
-            <input
-              type="checkbox"
-              checked={useAi}
-              onChange={(event) => setUseAi(event.target.checked)}
-            />
-            <span>
-              Use the selected AI provider to help rank evidence. Relevant
-              excerpts and the question will be sent to that provider and may
-              incur charges.
-            </span>
-          </label>
-        ) : (
-          <p>
-            Optional AI-assisted ranking requires a provider and model in{" "}
-            <Link href="/settings" className="text-link">
-              Settings
-            </Link>
-            .
-          </p>
-        )}
         <div className="provider-actions">
           <button
             className="button provider-submit"
@@ -166,6 +192,11 @@ export function JourneyPanel({
       <p role="status">{busy ? "Finding a path…" : error}</p>
       {journey && (
         <>
+          <p className="journey-mode-badge">
+            {journey.mode === "ai"
+              ? "AI-guided journey"
+              : "Static path · deterministic name ranking, not AI understanding"}
+          </p>
           <ul>
             {journey.uncertainties.map((item) => (
               <li key={item}>{item}</li>
@@ -187,6 +218,7 @@ export function JourneyPanel({
                       )
                       .filter((item) => item !== undefined)
                   : [];
+                const text = explanation(id);
                 return (
                   <li key={id}>
                     <button
@@ -197,6 +229,7 @@ export function JourneyPanel({
                       {node.name ?? node.path}
                     </button>
                     <span> · {node.kind ?? "file"}</span>
+                    {text && <p className="journey-explanation">{text}</p>}
                     {edge && (
                       <>
                         <p>

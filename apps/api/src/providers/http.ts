@@ -5,9 +5,10 @@ export async function providerJson(
   fetcher: typeof fetch,
   signal?: AbortSignal,
   body?: unknown,
+  timeoutMs = 12_000,
 ): Promise<unknown> {
   try {
-    const timeout = AbortSignal.timeout(12_000);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([timeout, signal]) : timeout;
     const response = await fetcher(url, {
       headers,
