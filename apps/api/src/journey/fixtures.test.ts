@@ -149,4 +149,32 @@ describe("static exploration on representative fixtures", () => {
     expect(nodes.at(-1)?.path?.startsWith("backend/")).toBe(true);
     expect(journey.uncertainties.join(" ")).toContain("heuristic");
   });
+  it("answers a saving question with the write, not a supporting read", async () => {
+    const files = load("fastapi-booking");
+    const graph = await analyzeFiles(files);
+    const journey = findJourney("how is a booking saved", graph);
+    expect(journeyIsValid(journey, graph)).toBe(true);
+    const nodes = journey.nodeIds.map((id) =>
+      graph.nodes.find((node) => node.id === id),
+    );
+    // The persistence step is the staged write, never the incidental
+    // lookup, and the transaction boundaries of the same function are
+    // disclosed instead of being folded into one invented edge.
+    expect(nodes.at(-1)?.name).toBe("SQLAlchemy write add Booking");
+    expect(
+      nodes.some((node) => node?.name === "SQLAlchemy read get Booking"),
+    ).toBe(false);
+    expect(journey.uncertainties.join(" ")).toContain("SQLAlchemy flush");
+    expect(journey.uncertainties.join(" ")).toContain("SQLAlchemy commit");
+  });
+  it("ranks a committed question at the transaction boundary", async () => {
+    const files = load("fastapi-booking");
+    const graph = await analyzeFiles(files);
+    const journey = findJourney("where is a booking committed", graph);
+    expect(journeyIsValid(journey, graph)).toBe(true);
+    const names = journey.nodeIds.map(
+      (id) => graph.nodes.find((node) => node.id === id)?.name,
+    );
+    expect(names.at(-1)).toBe("SQLAlchemy commit");
+  });
 });

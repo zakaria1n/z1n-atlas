@@ -69,6 +69,9 @@ const synonymGroup = new Map(
     "export download",
     "verify validate verification validation check",
     "approve approval confirm confirmation",
+    // Persistence outcomes: a question about saving should rank the write and
+    // the transaction boundary, not a supporting read that merely runs nearby.
+    "save saved saving store stores stored persist persists commit commits committed write writes written flush",
   ].flatMap((group, index) => group.split(" ").map((word) => [word, index])),
 );
 // Endings that do not change what a word means, longest first.
@@ -142,6 +145,11 @@ const bitCount = (value: number) => {
   for (let rest = value; rest; rest &= rest - 1) count++;
   return count;
 };
+/** "a", "b and c" for two items; "a, b and c" for more. */
+const listJoined = (items: string[]) =>
+  items.length <= 2
+    ? items.join(" and ")
+    : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 const quoted = (items: string[]) => items.map((item) => `"${item}"`).join(", ");
 
 type Info = {
@@ -354,6 +362,33 @@ export function findJourney(
     uncertainties.push(
       "No supported handler was resolved for the final route.",
     );
+  // A write operation ends the path where the row is staged, but the commit
+  // that makes it durable is a sibling call in the same function, not a
+  // successor: both are shown in the graph, never merged into one edge.
+  if (
+    last.kind === "database" &&
+    (last.name ?? "").startsWith("SQLAlchemy write")
+  ) {
+    const lastEdge = edges.at(-1);
+    const owner =
+      lastEdge && lastEdge.kind === "database-access"
+        ? lastEdge.source
+        : undefined;
+    const operations = [
+      ...new Set(
+        graph.edges
+          .filter(
+            (edge) => edge.kind === "database-access" && edge.source === owner,
+          )
+          .map((edge) => byId.get(edge.target)?.name ?? "")
+          .filter((name) => /^SQLAlchemy (flush|commit|rollback)$/.test(name)),
+      ),
+    ];
+    if (operations.length)
+      uncertainties.push(
+        `The final step writes the row through the session; the same function also calls ${listJoined(operations)}, shown as sibling operations in the graph rather than one merged step.`,
+      );
+  }
   if (!edges.length)
     uncertainties.push(
       "No supported transition was found for this matching symbol.",

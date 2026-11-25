@@ -124,13 +124,19 @@ describe("Python analysis", () => {
     ).toBe(false);
   }, 30_000);
 
-  it("reports SQLAlchemy session operations and links them to model classes", async () => {
+  it("reports SQLAlchemy reads, writes and transaction boundaries", async () => {
     const graph = await analyzeFiles(loadFixture());
-    const access = graph.nodes.filter(
+    const write = graph.nodes.filter(
       (node) =>
-        node.kind === "database" && node.name === "SQLAlchemy add Booking",
+        node.kind === "database" &&
+        node.name === "SQLAlchemy write add Booking",
     );
-    expect(access).toHaveLength(1);
+    expect(write).toHaveLength(1);
+    const read = graph.nodes.filter(
+      (node) =>
+        node.kind === "database" && node.name === "SQLAlchemy read get Booking",
+    );
+    expect(read).toHaveLength(1);
     const bookingClass = graph.nodes.find(
       (node) => node.name === "Booking" && node.kind === "class",
     );
@@ -138,10 +144,37 @@ describe("Python analysis", () => {
       graph.edges.some(
         (edge) =>
           edge.kind === "references" &&
-          edge.source === access[0]?.id &&
+          edge.source === write[0]?.id &&
           edge.target === bookingClass?.id,
       ),
     ).toBe(true);
+    for (const boundary of [
+      "SQLAlchemy flush",
+      "SQLAlchemy commit",
+      "SQLAlchemy rollback",
+    ]) {
+      const node = graph.nodes.find(
+        (item) => item.kind === "database" && item.name === boundary,
+      );
+      expect(node, boundary).toBeTruthy();
+      expect(
+        graph.edges.some(
+          (edge) => edge.kind === "database-access" && edge.target === node?.id,
+        ),
+        `${boundary} access edge`,
+      ).toBe(true);
+    }
+    // A transaction boundary claims no model.
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.kind === "references" &&
+          edge.target === bookingClass?.id &&
+          /flush|commit|rollback/.test(
+            graph.nodes.find((node) => node.id === edge.source)?.name ?? "",
+          ),
+      ),
+    ).toBe(false);
   }, 30_000);
 
   it("reports a relative import that leaves the project instead of guessing", async () => {

@@ -43,6 +43,16 @@ const sessionOperations = new Set([
   "delete",
   "execute",
 ]);
+/** Operations that read rows; everything else the session exposes writes. */
+const sessionReadOperations = new Set([
+  "get",
+  "scalar",
+  "scalars",
+  "query",
+  "execute",
+]);
+/** Transaction boundaries: they change no row themselves but prove persistence. */
+const sessionTransactionOperations = new Set(["flush", "commit", "rollback"]);
 const pythonClients = new Set(["requests", "httpx"]);
 const clientVerbs = new Set([
   "get",
@@ -580,8 +590,10 @@ function resolveChildRouter(file: PythonFile, child: PyExpr): string | null {
 }
 
 /**
- * Recognizes SQLAlchemy models and the session operations that read or write
- * them, so persistence shows up in the graph without executing anything.
+ * Recognizes SQLAlchemy models and the session operations around them: reads
+ * and writes are named for what they do to a model, and flush, commit and
+ * rollback mark the transaction boundaries that prove persistence. Nothing
+ * executes; every operation keeps its call site as evidence.
  */
 function extractDatabaseAccess(analysis: Analysis): void {
   for (const [, file] of analysis.files)
@@ -597,7 +609,9 @@ function extractDatabaseAccess(analysis: Analysis): void {
     for (const call of file.module.calls) {
       if (call.callee.kind !== "attribute") continue;
       const method = call.callee.name!;
-      if (!sessionOperations.has(method)) continue;
+      const isTransaction = sessionTransactionOperations.has(method);
+      const isModelOperation = sessionOperations.has(method);
+      if (!isTransaction && !isModelOperation) continue;
       const owner = call.owner >= 0 ? file.module.defs[call.owner] : null;
       const receiver = call.callee.receiverText!.split(".")[0];
       const annotated = owner?.parameters.some(
@@ -612,11 +626,6 @@ function extractDatabaseAccess(analysis: Analysis): void {
           ),
       );
       if (!sessionNames.has(receiver) && !annotated) continue;
-      const model = resolveModelArgument(file, call.args[0], call.owner);
-      if (!model) continue;
-      const modelClass =
-        file.classes.get(model) ?? importedClass(analysis, file, model);
-      if (!modelClass) continue;
       const id = `${path}#database:${call.start}`;
       const evidenceId = evidence(
         analysis,
@@ -625,12 +634,39 @@ function extractDatabaseAccess(analysis: Analysis): void {
         call.end,
         `${id}:evidence`,
       );
+      // A transaction boundary changes no row by itself, so it names only the
+      // operation and never claims a model or a successful outcome.
+      if (isTransaction) {
+        analysis.graph.nodes.push({
+          id,
+          path,
+          exports: [],
+          kind: "database",
+          name: `SQLAlchemy ${method}`,
+          startLine: lineOf(file.parsed, call.start),
+          endLine: lineOf(file.parsed, call.end),
+        });
+        pushEdge(analysis.graph, {
+          id: `${id}:access`,
+          source: owner ? owner.id : path,
+          target: id,
+          kind: "database-access",
+          confidence: "framework",
+          evidenceId,
+        });
+        continue;
+      }
+      const model = resolveModelArgument(file, call.args[0], call.owner);
+      if (!model) continue;
+      const modelClass =
+        file.classes.get(model) ?? importedClass(analysis, file, model);
+      if (!modelClass) continue;
       analysis.graph.nodes.push({
         id,
         path,
         exports: [],
         kind: "database",
-        name: `SQLAlchemy ${method} ${model}`,
+        name: `SQLAlchemy ${sessionReadOperations.has(method) ? "read" : "write"} ${method} ${model}`,
         startLine: lineOf(file.parsed, call.start),
         endLine: lineOf(file.parsed, call.end),
       });
