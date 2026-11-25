@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import type { Provider } from "@z1n/contracts";
 import cors from "@fastify/cors";
 import {
   analysisRequestSchema,
@@ -39,6 +40,7 @@ import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 import { createAnalysisCache } from "./analyzer/analysis-cache";
 import { createAnalysisJobs } from "./analyzer/analysis-jobs";
 import { MAX_GRAPH_BYTES } from "./analyzer/limits";
+import { serverAiCredential, type ServerAiCredential } from "./config";
 function validatedGraph(
   value: unknown,
   files: { path: string; content: string }[],
@@ -49,6 +51,93 @@ function validatedGraph(
   if (Buffer.byteLength(JSON.stringify(graph)) > MAX_GRAPH_BYTES)
     throw new AnalysisError("The graph exceeded the result size limit.");
   return graph;
+}
+
+/**
+ * The credential a request is served with: the user's own key (BYOK, never
+ * stored) or, when the request opted in and this development server enabled
+ * it, the backend environment. Null selects static behaviour.
+ */
+class ServerAiUnavailable extends Error {}
+function resolveAiCredential(
+  request:
+    | {
+        ai?: {
+          provider: "openai" | "google" | "anthropic";
+          apiKey: string;
+          model: string;
+        };
+        serverAi?: boolean;
+      }
+    | undefined,
+): {
+  credential: {
+    provider: Provider;
+    apiKey: string;
+    model: string | null;
+  } | null;
+  serverManaged: boolean;
+} {
+  if (request?.ai)
+    return {
+      credential: {
+        provider: request.ai.provider,
+        apiKey: request.ai.apiKey,
+        model: request.ai.model,
+      },
+      serverManaged: false,
+    };
+  if (request?.serverAi) {
+    const credential = serverAiCredential();
+    if (!credential)
+      throw new ServerAiUnavailable(
+        "Server-managed AI is not enabled on this server. Configure apps/api/.env with ENABLE_DEV_LLM_KEYS=true and a provider key, outside production.",
+      );
+    return { credential, serverManaged: true };
+  }
+  return { credential: null, serverManaged: false };
+}
+/**
+ * A configured backend credential without a model discovers one from the
+ * provider. The first advertised model wins; results are cached briefly so
+ * repeated questions do not re-list the catalogue.
+ */
+const discoveredModels = new Map<string, { model: string; expires: number }>();
+const DISCOVERY_TTL_MS = 10 * 60_000;
+async function modelFor(credential: ServerAiCredential): Promise<string> {
+  if (credential.model) return credential.model;
+  const cached = discoveredModels.get(
+    `${credential.provider}:${credential.apiKey.length}`,
+  );
+  if (cached && cached.expires > Date.now()) return cached.model;
+  const list = await createProviderAdapter(credential.provider).listModels(
+    credential.apiKey,
+  );
+  const model =
+    list.models.find((item) => item.compatibility === "advertised")?.id ??
+    list.models[0]?.id;
+  if (!model)
+    throw new ProviderError(
+      "INVALID_RESPONSE",
+      "The provider lists no usable model. Configure AI_DEFAULT_MODEL in apps/api/.env.",
+    );
+  discoveredModels.set(`${credential.provider}:${credential.apiKey.length}`, {
+    model,
+    expires: Date.now() + DISCOVERY_TTL_MS,
+  });
+  return model;
+}
+/** A server-managed credential completed with its discovered model. */
+async function withDiscoveredModel(credential: ServerAiCredential): Promise<{
+  provider: Provider;
+  apiKey: string;
+  model: string;
+}> {
+  return {
+    provider: credential.provider,
+    apiKey: credential.apiKey,
+    model: await modelFor(credential),
+  };
 }
 
 export async function createApp(
@@ -354,6 +443,17 @@ export async function createApp(
       }
     },
   );
+  // Tells the frontend whether server-managed AI exists, without ever
+  // exposing the credential itself. Only a development server can answer yes.
+  app.get("/api/ai/status", async () => {
+    const credential = serverAiCredential();
+    if (!credential) return { available: false as const };
+    return {
+      available: true as const,
+      provider: credential.provider,
+      ...(credential.model ? { model: credential.model } : {}),
+    };
+  });
   app.post("/api/chat", async (request, reply) => {
     const input = chatRequestSchema.safeParse(request.body);
     if (!input.success)
@@ -369,8 +469,32 @@ export async function createApp(
       if (!reply.raw.writableEnded) abort.abort();
     };
     reply.raw.once("close", cancel);
+    let resolved;
     try {
-      const { provider, apiKey, model, question, files } = input.data;
+      resolved = resolveAiCredential(input.data);
+      if (resolved.serverManaged && resolved.credential) {
+        const completed = await withDiscoveredModel(resolved.credential);
+        resolved.credential.model = completed.model;
+        process.stdout.write(
+          `AI chat served with ${completed.provider}/${completed.model} from the backend environment.\n`,
+        );
+      }
+    } catch (error) {
+      reply.raw.off("close", cancel);
+      active--;
+      if (error instanceof ProviderError)
+        return reply.code(502).send({ error: error.message });
+      return reply.code(403).send({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Server-managed AI is unavailable.",
+      });
+    }
+    try {
+      const { question, files } = input.data;
+      const credential = resolved.credential!;
+      const model = credential.model as string;
       const graph =
         analysisCache.get(input.data.analysisId, files) ??
         validatedGraph(
@@ -378,7 +502,11 @@ export async function createApp(
           files,
         );
       const answer = await answerQuestion(question, files, graph, (context) =>
-        generateAnswer({ provider, apiKey, model }, context, abort.signal),
+        generateAnswer(
+          { provider: credential.provider, apiKey: credential.apiKey, model },
+          context,
+          abort.signal,
+        ),
       );
       return chatAnswerSchema.parse(answer);
     } catch (error) {
@@ -425,18 +553,26 @@ export async function createApp(
           await runAnalysis(input.data.files, { signal: abort.signal }),
           input.data.files,
         );
-      if (input.data.ai) {
+      const resolved = resolveAiCredential(input.data);
+      if (resolved.credential) {
         // AI-guided mode: the model explores with controlled tools and every
         // identifier it cites is validated against the graph.
-        const { provider, apiKey, model } = input.data.ai;
+        const credential = resolved.serverManaged
+          ? await withDiscoveredModel(resolved.credential)
+          : {
+              provider: resolved.credential.provider,
+              apiKey: resolved.credential.apiKey,
+              model: resolved.credential.model as string,
+            };
+        if (resolved.serverManaged)
+          process.stdout.write(
+            `AI journey served with ${credential.provider}/${credential.model} from the backend environment.\n`,
+          );
         const journey = await runJourneyAgent({
           question: input.data.goal,
           files: input.data.files,
           graph,
-          generate: createJourneyAgentGenerate(
-            { provider, apiKey, model },
-            fetch,
-          ),
+          generate: createJourneyAgentGenerate(credential, fetch),
           signal: abort.signal,
         });
         return journeySchema.parse(journey);
@@ -444,6 +580,8 @@ export async function createApp(
       // Static mode: deterministic name-based exploration without a provider.
       return journeySchema.parse(findJourney(input.data.goal, graph));
     } catch (error) {
+      if (error instanceof ServerAiUnavailable)
+        return reply.code(403).send({ error: error.message });
       if (error instanceof AnalysisError)
         return reply.code(500).send({ error: error.message });
       if (error instanceof ProviderError) {

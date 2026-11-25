@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { askRepository, requestJourney } from "./api-client";
 const request = {
-  provider: "openai" as const,
-  apiKey: "fake-key",
-  model: "demo",
+  ai: {
+    provider: "openai" as const,
+    apiKey: "fake-key",
+    model: "demo",
+    providerConsent: true as const,
+  },
   question: "Where is login?",
   origin: "local" as const,
   consent: true,

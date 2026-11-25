@@ -4,6 +4,7 @@ import type { CodeGraph, GraphEdge, Journey } from "@z1n/contracts";
 import type { RepositorySession } from "@/features/repository-import/repository-session";
 import { apiOriginLabel, requestJourney } from "@/lib/api-client";
 import { useProviderSession } from "@/features/provider-settings/provider-session";
+import { useServerAiStatus } from "@/features/provider-settings/server-ai";
 import Link from "next/link";
 
 const descriptions: Partial<Record<GraphEdge["kind"], string>> = {
@@ -32,7 +33,11 @@ export function JourneyPanel({
   const [goal, setGoal] = useState("");
   const [consent, setConsent] = useState(false);
   const provider = useProviderSession().session;
-  const configured = Boolean(provider.apiKey && provider.model);
+  const serverAi = useServerAiStatus();
+  const server = serverAi?.available ? serverAi : null;
+  const ownKey = Boolean(provider.apiKey && provider.model);
+  const serverManaged = server !== null;
+  const configured = ownKey || serverManaged;
   const [aiMode, setAiMode] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,10 +45,7 @@ export function JourneyPanel({
   useEffect(() => () => pending.current?.abort(), []);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (
-      !consent ||
-      (aiMode && configured && (!provider.apiKey || !provider.model))
-    )
+    if (!consent || (aiMode && ownKey && (!provider.apiKey || !provider.model)))
       return;
     pending.current?.abort();
     const controller = new AbortController();
@@ -59,7 +61,7 @@ export function JourneyPanel({
           consent: true,
           analysisId: graph.analysisId,
           files: session.files.map(({ path, content }) => ({ path, content })),
-          ...(aiMode && configured
+          ...(aiMode && ownKey
             ? {
                 ai: {
                   provider: provider.provider,
@@ -68,7 +70,9 @@ export function JourneyPanel({
                   providerConsent: true as const,
                 },
               }
-            : {}),
+            : aiMode && serverManaged
+              ? { serverAi: true, providerConsent: true as const }
+              : {}),
         },
         graph,
         controller.signal,
@@ -118,9 +122,22 @@ export function JourneyPanel({
                 onChange={() => setAiMode(true)}
               />
               <span>
-                <strong>AI-guided.</strong> {provider.provider} explores the
-                code with controlled tools. The question and relevant excerpts
-                are sent to the provider and may incur charges.
+                <strong>AI-guided.</strong>{" "}
+                {ownKey ? (
+                  <>
+                    {provider.provider} explores the code with controlled tools.
+                    The question and relevant excerpts are sent to the provider
+                    and may incur charges.
+                  </>
+                ) : (
+                  <>
+                    The backend&rsquo;s {server?.provider} key explores the code
+                    with controlled tools
+                    {server?.model ? ` using ${server.model}` : ""}. The
+                    question and relevant excerpts are sent to the provider and
+                    may incur charges.
+                  </>
+                )}
               </span>
             </label>
             <label className="assistant-consent">

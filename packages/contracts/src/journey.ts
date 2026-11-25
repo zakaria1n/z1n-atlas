@@ -14,6 +14,11 @@ export const journeyRequestSchema = z
     ai: providerTestRequestSchema
       .extend({ providerConsent: z.literal(true) })
       .optional(),
+    // Requests the backend's own configured credential instead of BYOK.
+    // Only honored on a development server that enabled it; the same
+    // source-sharing consent applies because files still reach a provider.
+    serverAi: z.boolean().optional(),
+    providerConsent: z.literal(true).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -27,6 +32,17 @@ export const journeyRequestSchema = z
       ctx.addIssue({
         code: "custom",
         message: "Invalid source selection or missing consent.",
+      });
+    if (value.serverAi && !value.ai && value.providerConsent !== true)
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Server-managed AI needs the same source-sharing consent as a personal key.",
+      });
+    if (value.ai && value.serverAi)
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose either a personal key or the server key, not both.",
       });
   });
 export const journeyModeSchema = z.enum(["ai", "static"]);

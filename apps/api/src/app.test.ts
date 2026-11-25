@@ -282,9 +282,12 @@ describe("chat HTTP boundary", () => {
         url: "/api/chat",
         headers: { origin: "http://localhost:3000" },
         payload: {
-          provider: "openai",
-          apiKey: "fake-key",
-          model: "demo",
+          ai: {
+            provider: "openai",
+            apiKey: "fake-key",
+            model: "demo",
+            providerConsent: true,
+          },
           question: "Where is login?",
           files: [{ path: "a.ts", content: "export const login = 1;" }],
           origin: "local",
@@ -308,9 +311,12 @@ describe("chat HTTP boundary", () => {
       "content-type": "application/json",
     };
     const payload = {
-      provider: "openai",
-      apiKey: "fake-key",
-      model: "demo",
+      ai: {
+        provider: "openai",
+        apiKey: "fake-key",
+        model: "demo",
+        providerConsent: true,
+      },
       question: "Where is payment?",
       files: [{ path: "a.ts", content: "export const x = 1;" }],
       origin: "local",
@@ -333,6 +339,167 @@ describe("chat HTTP boundary", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().claims).toEqual([]);
     expect(response.body).not.toContain("fake-key");
+  });
+});
+describe("server-managed AI boundary", () => {
+  const withEnvironment = async (environment, run) => {
+    const saved: Record<string, string | undefined> = {};
+    for (const [name, value] of Object.entries(environment)) {
+      saved[name] = process.env[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    try {
+      return await run();
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  };
+  it("reports availability without exposing the key", async () => {
+    const disabled = await withEnvironment(
+      { ENABLE_DEV_LLM_KEYS: undefined },
+      async () => {
+        const isolated = await createApp();
+        try {
+          return await isolated.inject({
+            method: "GET",
+            url: "/api/ai/status",
+          });
+        } finally {
+          await isolated.close();
+        }
+      },
+    );
+    expect(disabled.json().available).toBe(false);
+    const result = await withEnvironment(
+      {
+        ENABLE_DEV_LLM_KEYS: "true",
+        OPENAI_API_KEY: "server-secret",
+        OPENAI_DEFAULT_MODEL: "demo",
+      },
+      async () => {
+        const isolated = await createApp();
+        try {
+          return await isolated.inject({
+            method: "GET",
+            url: "/api/ai/status",
+          });
+        } finally {
+          await isolated.close();
+        }
+      },
+    );
+    expect(result.json().available).toBe(true);
+    expect(result.json().provider).toBe("openai");
+    expect(result.json().model).toBe("demo");
+    expect(result.body).not.toContain("server-secret");
+  });
+  it("is never available in production, whatever the flags say", async () => {
+    const result = await withEnvironment(
+      {
+        ENABLE_DEV_LLM_KEYS: "true",
+        OPENAI_API_KEY: "server-secret",
+        NODE_ENV: "production",
+      },
+      async () => {
+        const isolated = await createApp();
+        try {
+          return await isolated.inject({
+            method: "GET",
+            url: "/api/ai/status",
+          });
+        } finally {
+          await isolated.close();
+        }
+      },
+    );
+    expect(result.json().available).toBe(false);
+  });
+  it("serves chat with the backend key when opted in", async () => {
+    const response = await withEnvironment(
+      {
+        ENABLE_DEV_LLM_KEYS: "true",
+        OPENAI_API_KEY: "server-secret",
+        OPENAI_DEFAULT_MODEL: "demo",
+      },
+      async () => {
+        const isolated = await createApp();
+        try {
+          return await isolated.inject({
+            method: "POST",
+            url: "/api/chat",
+            headers: { origin: "http://localhost:3000" },
+            payload: {
+              serverAi: true,
+              providerConsent: true,
+              question: "Where is login?",
+              files: [{ path: "a.ts", content: "export const login = 1;" }],
+              origin: "local",
+              consent: true,
+            },
+          });
+        } finally {
+          await isolated.close();
+        }
+      },
+    );
+    expect(response.statusCode).toBe(200);
+    expect(response.body).not.toContain("server-secret");
+  });
+  it("rejects server-managed chat when disabled", async () => {
+    const response = await withEnvironment(
+      { ENABLE_DEV_LLM_KEYS: undefined },
+      async () => {
+        const isolated = await createApp();
+        try {
+          return await isolated.inject({
+            method: "POST",
+            url: "/api/chat",
+            headers: { origin: "http://localhost:3000" },
+            payload: {
+              serverAi: true,
+              providerConsent: true,
+              question: "Where is login?",
+              files: [{ path: "a.ts", content: "export const login = 1;" }],
+              origin: "local",
+              consent: true,
+            },
+          });
+        } finally {
+          await isolated.close();
+        }
+      },
+    );
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error).toContain("Server-managed AI");
+  });
+  it("requires consent for server-managed journeys", async () => {
+    const response = await withEnvironment(
+      { ENABLE_DEV_LLM_KEYS: "true", OPENAI_API_KEY: "server-secret" },
+      async () => {
+        const isolated = await createApp();
+        try {
+          return await isolated.inject({
+            method: "POST",
+            url: "/api/journeys",
+            headers: { origin: "http://localhost:3000" },
+            payload: {
+              serverAi: true,
+              files: [{ path: "a.ts", content: "export function login() {}" }],
+              origin: "local",
+              consent: true,
+              goal: "login",
+            },
+          });
+        } finally {
+          await isolated.close();
+        }
+      },
+    );
+    expect(response.statusCode).toBe(400);
   });
 });
 describe("journey HTTP boundary", () => {
@@ -372,9 +539,12 @@ describe("journey HTTP boundary", () => {
           origin: "local",
           consent: true,
           providerConsent: true,
-          provider: "openai",
-          apiKey: "fake-key",
-          model: "demo",
+          ai: {
+            provider: "openai",
+            apiKey: "fake-key",
+            model: "demo",
+            providerConsent: true,
+          },
           question: "login",
           analysisId,
         },

@@ -84,21 +84,27 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   );
   // The AI-guided journey is answered by a mock that only uses identifiers
   // of the real analyzed graph; static requests go to the real backend.
-  let analysisGraph: {
-    nodes: { id: string; name?: string }[];
-    edges: { id: string; source: string; target: string; kind: string }[];
-  } | undefined;
+  const analysis = {
+    graph: undefined as
+      | {
+          nodes: { id: string; name?: string }[];
+          edges: { id: string; source: string; target: string; kind: string }[];
+        }
+      | undefined,
+  };
   await page.route("**/api/journeys", async (route) => {
     const payload = route.request().postDataJSON() as {
       ai?: unknown;
       analysisId?: string;
     };
     if (!payload.ai) return route.continue();
-    const form = analysisGraph!.nodes.find((node) => node.name === "Form")!;
-    const link = analysisGraph!.edges.find(
+    const form = analysis.graph!.nodes.find((node) => node.name === "Form")!;
+    const link = analysis.graph!.edges.find(
       (edge) => edge.source === form.id && edge.kind === "calls",
     )!;
-    const callee = analysisGraph!.nodes.find((node) => node.id === link.target)!;
+    const callee = analysis.graph!.nodes.find(
+      (node) => node.id === link.target,
+    )!;
     return route.fulfill({
       status: 200,
       headers: cors,
@@ -139,7 +145,7 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   await page.getByRole("button", { name: "Send and analyze" }).click();
   const analysisJson = await (await analysisResponse).json();
   const analysisId = analysisJson.graph.analysisId as string;
-  analysisGraph = analysisJson.graph;
+  analysis.graph = analysisJson.graph;
   expect(analysisId).toBeTruthy();
   await expect(
     page.getByRole("region", { name: "Source relationship graph" }),

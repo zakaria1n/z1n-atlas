@@ -28,7 +28,7 @@ import {
 } from "@z1n/contracts";
 
 const configured = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:4000";
-function backendUrl(): string {
+export function backendUrl(): string {
   const url = new URL(configured);
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if (

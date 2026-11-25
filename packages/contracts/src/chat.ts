@@ -2,15 +2,22 @@ import { z } from "zod";
 import { analysisRequestSchema, sourceFileSchema } from "./http";
 import { providerTestRequestSchema } from "./providers";
 import { MAX_SOURCE_FILES } from "./repository/limits";
-export const chatRequestSchema = providerTestRequestSchema
-  .extend({
+export const chatRequestSchema = z
+  .object({
     question: z.string().trim().min(2).max(1000),
     files: z.array(sourceFileSchema).max(MAX_SOURCE_FILES),
     origin: z.enum(["github", "local"]),
     consent: z.boolean(),
     providerConsent: z.literal(true),
     analysisId: z.uuid().optional(),
+    // The personal key (BYOK) or the backend's development credential.
+    // Exactly one of the two selects how the request is served.
+    ai: providerTestRequestSchema
+      .extend({ providerConsent: z.literal(true) })
+      .optional(),
+    serverAi: z.boolean().optional(),
   })
+  .strict()
   .superRefine((value, ctx) => {
     if (
       !analysisRequestSchema.safeParse({
@@ -22,6 +29,16 @@ export const chatRequestSchema = providerTestRequestSchema
       ctx.addIssue({
         code: "custom",
         message: "Invalid source selection or missing consent.",
+      });
+    if (value.ai && value.serverAi)
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose either a personal key or the server key, not both.",
+      });
+    if (!value.ai && !value.serverAi)
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose a provider or the server-managed key.",
       });
   });
 export type ChatRequest = z.infer<typeof chatRequestSchema>;

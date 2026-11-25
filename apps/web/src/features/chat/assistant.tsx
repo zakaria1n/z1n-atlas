@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ChatAnswer } from "@z1n/contracts";
 import { useProviderSession } from "@/features/provider-settings/provider-session";
+import { useServerAiStatus } from "@/features/provider-settings/server-ai";
 import {
   useRepositorySession,
   type RepositorySession,
@@ -17,6 +18,10 @@ export function Assistant({
   onOpenCitation: (path: string, line: number) => void;
 }) {
   const { session: provider } = useProviderSession();
+  const serverAi = useServerAiStatus();
+  const server = serverAi?.available ? serverAi : null;
+  const ownKey = Boolean(provider.apiKey && provider.model);
+  const serverManaged = server !== null;
   const { analysisId } = useRepositorySession();
   const [question, setQuestion] = useState("");
   const [consent, setConsent] = useState(false);
@@ -32,7 +37,7 @@ export function Assistant({
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!session || !provider.apiKey || !provider.model || !consent) return;
+    if (!session || !consent || (!ownKey && !serverManaged)) return;
     cancel();
     const controller = new AbortController();
     pending.current = controller;
@@ -42,15 +47,22 @@ export function Assistant({
     try {
       const result = await askRepository(
         {
-          provider: provider.provider,
-          apiKey: provider.apiKey,
-          model: provider.model,
           question,
           files: session.files.map(({ path, content }) => ({ path, content })),
           origin: session.origin,
           consent: true,
           providerConsent: true,
           analysisId,
+          ...(ownKey
+            ? {
+                ai: {
+                  provider: provider.provider,
+                  apiKey: provider.apiKey,
+                  model: provider.model,
+                  providerConsent: true as const,
+                },
+              }
+            : { serverAi: true }),
         },
         controller.signal,
       );
@@ -70,14 +82,15 @@ export function Assistant({
     }
   }
   if (!session) return <p>Import a project before asking about its source.</p>;
-  if (!provider.apiKey || !provider.model)
+  if (!ownKey && !serverManaged)
     return (
       <p>
         Choose a provider, key and model in{" "}
         <Link href="/settings" className="text-link">
           Settings
         </Link>{" "}
-        to ask a question.
+        to ask a question. A development server with backend keys can also
+        answer without a personal key.
       </p>
     );
   return (
@@ -107,8 +120,11 @@ export function Assistant({
           <span>
             I agree to send the selected files to{" "}
             <strong>{apiOriginLabel()}</strong> for analysis and relevant
-            excerpts to the selected AI provider. Provider requests may incur
-            charges.
+            excerpts to{" "}
+            {ownKey
+              ? "the selected AI provider"
+              : `the backend's ${server?.provider} provider`}
+            . Provider requests may incur charges.
           </span>
         </label>
         <div className="provider-actions">
