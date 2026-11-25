@@ -5,35 +5,58 @@ import type { Provider } from "@z1n/contracts";
 
 export const aiProviders: Provider[] = ["openai", "google", "anthropic"];
 
-const keySchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(512)
-  .regex(/^[^\s\x00-\x1f\x7f]+$/);
-const modelSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(256)
-  .regex(/^[a-zA-Z0-9._:/-]+$/);
-const booleanSchema = z
-  .enum(["true", "false"])
-  .transform((value) => value === "true");
+/**
+ * An assignment with no value (`KEY=`) or only spaces means "not configured",
+ * never an empty credential: a developer who fills in one key of a copied
+ * example file must not trip validation for the keys left blank.
+ */
+const notBlank = (value: unknown) =>
+  typeof value === "string" && value.trim() === "" ? undefined : value;
+
+const keySchema = z.preprocess(
+  notBlank,
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(512)
+    .regex(/^[^\s\x00-\x1f\x7f]+$/)
+    .optional(),
+);
+const modelSchema = z.preprocess(
+  notBlank,
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .regex(/^[a-zA-Z0-9._:/-]+$/)
+    .optional(),
+);
+const booleanSchema = z.preprocess(
+  notBlank,
+  z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .optional(),
+);
 
 const environmentSchema = z.object({
-  OPENAI_API_KEY: keySchema.optional(),
-  GEMINI_API_KEY: keySchema.optional(),
-  GOOGLE_API_KEY: keySchema.optional(),
-  ANTHROPIC_API_KEY: keySchema.optional(),
-  AI_DEFAULT_PROVIDER: z.enum(["openai", "google", "anthropic"]).optional(),
-  AI_DEFAULT_MODEL: modelSchema.optional(),
-  OPENAI_DEFAULT_MODEL: modelSchema.optional(),
-  GEMINI_DEFAULT_MODEL: modelSchema.optional(),
-  GOOGLE_DEFAULT_MODEL: modelSchema.optional(),
-  ANTHROPIC_DEFAULT_MODEL: modelSchema.optional(),
-  RUN_LIVE_LLM_TESTS: booleanSchema.optional(),
-  ENABLE_DEV_LLM_KEYS: booleanSchema.optional(),
+  OPENAI_API_KEY: keySchema,
+  GEMINI_API_KEY: keySchema,
+  GOOGLE_API_KEY: keySchema,
+  ANTHROPIC_API_KEY: keySchema,
+  AI_DEFAULT_PROVIDER: z.preprocess(
+    notBlank,
+    z.enum(["openai", "google", "anthropic"]).optional(),
+  ),
+  AI_DEFAULT_MODEL: modelSchema,
+  OPENAI_DEFAULT_MODEL: modelSchema,
+  GEMINI_DEFAULT_MODEL: modelSchema,
+  GOOGLE_DEFAULT_MODEL: modelSchema,
+  ANTHROPIC_DEFAULT_MODEL: modelSchema,
+  RUN_LIVE_LLM_TESTS: booleanSchema,
+  ENABLE_DEV_LLM_KEYS: booleanSchema,
 });
 
 export type DeveloperAiConfig = z.infer<typeof environmentSchema> & {
@@ -44,7 +67,9 @@ export type DeveloperAiConfig = z.infer<typeof environmentSchema> & {
 
 /**
  * Reads a `.env` file into process.env without overriding values that are
- * already set, so the shell and the CI always win over the file.
+ * already set, so the shell and the CI always win over the file. An
+ * assignment without a value is not recorded, because an empty variable
+ * means "not configured" throughout this module.
  */
 export function loadDotenvFile(filePath: string, target = process.env): void {
   if (!existsSync(filePath)) return;
@@ -58,7 +83,8 @@ export function loadDotenvFile(filePath: string, target = process.env): void {
     let value = line.slice(separator + 1).trim();
     const quoted = /^"(.*)"$/s.exec(value) ?? /^'(.*)'$/s.exec(value);
     if (quoted) value = quoted[1];
-    if (!(name in target)) target[name] = value;
+    if (!value || name in target) continue;
+    target[name] = value;
   }
 }
 

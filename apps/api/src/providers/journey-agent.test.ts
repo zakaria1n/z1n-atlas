@@ -13,7 +13,15 @@ const tools: JourneyToolDefinition[] = [
   {
     name: "search_code",
     description: "Search the analyzed source.",
-    parameters: { type: "object", properties: {} },
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "A search query." },
+      },
+      required: ["query"],
+      additionalProperties: false,
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+    },
   },
 ];
 const system = "Explore and answer with JSON.";
@@ -226,6 +234,18 @@ describe("journey tool-calling adapters", () => {
     expect(answered?.parts[0].functionResponse).toMatchObject({
       name: "search_code",
       response: { matches: [] },
+    });
+    // Google rejects JSON-Schema strictness keywords in its function
+    // declarations; the rest of the schema must arrive untouched.
+    const body = JSON.stringify(requests[0].body);
+    expect(body).not.toContain("additionalProperties");
+    expect(body).not.toContain("$schema");
+    expect(
+      requests[0].body.tools[0].functionDeclarations[0].parameters,
+    ).toMatchObject({
+      type: "object",
+      properties: { query: { type: "string", description: "A search query." } },
+      required: ["query"],
     });
   });
   it("maps provider rejection to a typed error", async () => {

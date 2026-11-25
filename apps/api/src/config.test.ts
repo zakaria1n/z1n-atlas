@@ -8,6 +8,18 @@ import {
   serverAiCredential,
 } from "./config";
 
+/** Writes the given lines to a temporary .env and loads it into the target. */
+function loadDotenvFileFromText(lines: string[], target: NodeJS.ProcessEnv) {
+  const directory = mkdtempSync(join(tmpdir(), "z1n-env-"));
+  try {
+    const file = join(directory, ".env");
+    writeFileSync(file, lines.join("\n"));
+    loadDotenvFile(file, target);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 describe("dotenv loading", () => {
   it("parses assignments, comments and quotes without overriding the shell", () => {
     const directory = mkdtempSync(join(tmpdir(), "z1n-env-"));
@@ -39,13 +51,36 @@ describe("dotenv loading", () => {
     loadDotenvFile(join(tmpdir(), "z1n-missing-env"), target);
     expect(target.OPENAI_API_KEY).toBeUndefined();
   });
+  it("does not record assignments without a value", () => {
+    const target: NodeJS.ProcessEnv = {};
+    loadDotenvFileFromText(
+      ["OPENAI_API_KEY=", "GEMINI_API_KEY=", "AI_DEFAULT_MODEL=   "],
+      target,
+    );
+    expect("OPENAI_API_KEY" in target).toBe(false);
+    expect("GEMINI_API_KEY" in target).toBe(false);
+    expect("AI_DEFAULT_MODEL" in target).toBe(false);
+  });
 });
 
 describe("developer AI configuration", () => {
-  it("stays empty without any variables and works without credentials", () => {
-    const config = developerAiConfig({});
-    expect(config.keys).toEqual({});
-    expect(config.RUN_LIVE_LLM_TESTS).toBeUndefined();
+  it("treats copied example variables left empty as unconfigured", () => {
+    // A developer who fills in one key of the example file must not trip
+    // validation for the keys left blank.
+    const config = developerAiConfig({
+      OPENAI_API_KEY: "",
+      GEMINI_API_KEY: "g-key",
+      ANTHROPIC_API_KEY: "   ",
+      AI_DEFAULT_PROVIDER: "google",
+      AI_DEFAULT_MODEL: "",
+      RUN_LIVE_LLM_TESTS: "true",
+      ENABLE_DEV_LLM_KEYS: "true",
+    });
+    expect(Object.keys(config.keys)).toEqual(["google"]);
+    expect(config.AI_DEFAULT_PROVIDER).toBe("google");
+    expect(config.AI_DEFAULT_MODEL).toBeUndefined();
+    expect(config.RUN_LIVE_LLM_TESTS).toBe(true);
+    expect(serverAiCredential({}, { GEMINI_API_KEY: "" })).toBeNull();
   });
 
   it("maps Gemini and Google spellings onto the google provider", () => {

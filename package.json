@@ -13,7 +13,7 @@
     "lint": "eslint .",
     "typecheck": "pnpm build:packages && pnpm --filter @z1n/api typecheck && pnpm --filter @z1n/web typecheck",
     "test": "pnpm build:packages && pnpm --filter @z1n/api build && vitest run",
-    "test:llm:live": "pnpm build:packages && pnpm --filter @z1n/api build && vitest run apps/api/src/live",
+    "test:llm:live": "pnpm build:packages && pnpm --filter @z1n/api build && vitest run --config vitest.live.config.mts apps/api/src/live",
     "test:e2e": "playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

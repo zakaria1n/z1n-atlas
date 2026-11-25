@@ -3,9 +3,16 @@ export type ProviderErrorCode =
   | "INVALID_KEY"
   | "FORBIDDEN"
   | "RATE_LIMIT"
+  | "UNSUPPORTED_MODEL"
   | "UNAVAILABLE"
   | "INVALID_RESPONSE";
 export class ProviderError extends Error {
+  /**
+   * The provider's own response body, attached by the HTTP layer for
+   * internal diagnosis only. Never placed in the message: bodies may echo
+   * credentials, and errors end up in logs and responses.
+   */
+  providerDetail?: string;
   constructor(
     public readonly code: ProviderErrorCode,
     message: string,
@@ -27,6 +34,11 @@ export function providerErrorForStatus(status: number): ProviderError {
     return new ProviderError(
       "FORBIDDEN",
       "The key does not have permission for this request.",
+    );
+  if (status === 404)
+    return new ProviderError(
+      "UNSUPPORTED_MODEL",
+      "The provider does not offer this model, or no longer offers it to this account. Choose a current model.",
     );
   if (status === 429)
     return new ProviderError(

@@ -1,4 +1,27 @@
 import { ProviderError, providerErrorForStatus } from "./contracts";
+
+/**
+ * Keeps the provider's own explanation available for internal diagnosis — a
+ * discontinued model naming its successor, for instance — without ever
+ * placing it in the message: error bodies may echo credentials, so they
+ * never reach logs, responses or stringified errors.
+ */
+async function withProviderDetail(
+  error: ProviderError,
+  response: Response,
+): Promise<ProviderError> {
+  try {
+    const text = await response.text();
+    const snippet = text
+      .replace(/[\x00-\x1f\x7f]+/g, " ")
+      .trim()
+      .slice(0, 300);
+    if (snippet) error.providerDetail = snippet;
+  } catch {
+    // The status-mapped error is still the answer when the body is unreadable.
+  }
+  return error;
+}
 export async function providerJson(
   url: string,
   headers: Record<string, string>,
@@ -19,7 +42,11 @@ export async function providerJson(
         ? {}
         : { method: "POST", body: JSON.stringify(body) }),
     });
-    if (!response.ok) throw providerErrorForStatus(response.status);
+    if (!response.ok)
+      throw await withProviderDetail(
+        providerErrorForStatus(response.status),
+        response,
+      );
     const reader = response.body?.getReader();
     if (!reader)
       throw new ProviderError(

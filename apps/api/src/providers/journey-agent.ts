@@ -174,6 +174,33 @@ async function openaiTurn(
     : { kind: "final", text };
 }
 
+/**
+ * Google's function declarations reject JSON-Schema keywords that describe
+ * object strictness (`additionalProperties`, `$schema`), so the parameters
+ * are copied without them. Types, properties, items, required and enum stay
+ * intact — the tool contract keeps its meaning.
+ */
+function googleParameters(
+  parameters: unknown,
+  depth = 8,
+): Record<string, unknown> | undefined {
+  if (!parameters || typeof parameters !== "object" || depth < 0) return {};
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parameters)) {
+    if (key === "additionalProperties" || key === "$schema") continue;
+    if (value && typeof value === "object") {
+      result[key] = Array.isArray(value)
+        ? value.map((item) =>
+            item && typeof item === "object" && !Array.isArray(item)
+              ? googleParameters(item, depth - 1)
+              : item,
+          )
+        : googleParameters(value, depth - 1);
+    } else result[key] = value;
+  }
+  return result;
+}
+
 async function googleTurn(
   input: ProviderTestRequest,
   system: string,
@@ -223,7 +250,7 @@ async function googleTurn(
             functionDeclarations: tools.map((tool) => ({
               name: tool.name,
               description: tool.description,
-              parameters: tool.parameters,
+              parameters: googleParameters(tool.parameters),
             })),
           },
         ],

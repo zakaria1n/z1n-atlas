@@ -31,6 +31,7 @@ import {
 import { createProviderAdapter } from "./providers/discovery";
 import { ProviderError } from "./providers/contracts";
 import { testModel } from "./providers/test-model";
+import { probeToolCalling } from "./providers/model-probe";
 import { generateAnswer } from "./providers/generate-answer";
 import { answerQuestion } from "./evidence/answer";
 import { findJourney } from "./journey/find-journey";
@@ -106,26 +107,63 @@ const discoveredModels = new Map<string, { model: string; expires: number }>();
 const DISCOVERY_TTL_MS = 10 * 60_000;
 async function modelFor(credential: ServerAiCredential): Promise<string> {
   if (credential.model) return credential.model;
-  const cached = discoveredModels.get(
-    `${credential.provider}:${credential.apiKey.length}`,
-  );
+  const cacheKey = `${credential.provider}:${credential.apiKey.length}`;
+  const cached = discoveredModels.get(cacheKey);
   if (cached && cached.expires > Date.now()) return cached.model;
   const list = await createProviderAdapter(credential.provider).listModels(
     credential.apiKey,
   );
-  const model =
-    list.models.find((item) => item.compatibility === "advertised")?.id ??
-    list.models[0]?.id;
-  if (!model)
-    throw new ProviderError(
+  // Catalogues still list discontinued and non-text models, so text-shaped
+  // candidates are probed with a tiny generation until one answers; at most
+  // six requests, and a discontinuation notice names the successor to try.
+  const queue = [
+    ...new Set(
+      list.models
+        .filter(
+          (item) =>
+            !/(?:tts|audio|image|embedding|imagen|veo|live)/i.test(item.id),
+        )
+        .map((item) => item.id),
+    ),
+  ].slice(0, 6);
+  const tried = new Set<string>();
+  let lastError: ProviderError | undefined;
+  while (queue.length) {
+    const model = queue.shift()!;
+    tried.add(model);
+    try {
+      // The journey needs tool calling, not just text generation, so the
+      // probe mirrors that requirement.
+      await probeToolCalling({
+        provider: credential.provider,
+        apiKey: credential.apiKey,
+        model,
+      });
+      discoveredModels.set(cacheKey, {
+        model,
+        expires: Date.now() + DISCOVERY_TTL_MS,
+      });
+      return model;
+    } catch (error) {
+      if (!(error instanceof ProviderError)) throw error;
+      lastError = error;
+      // Only a rejected key says something about every candidate; missing
+      // models, per-model quotas, per-model tool permissions and load are
+      // all worth trying the next candidate against.
+      if (error.code === "INVALID_KEY") throw error;
+      const successor = /use models\/([a-z0-9._-]+)/i.exec(
+        error.providerDetail ?? error.message,
+      )?.[1];
+      if (successor && !tried.has(successor)) queue.unshift(successor);
+    }
+  }
+  throw (
+    lastError ??
+    new ProviderError(
       "INVALID_RESPONSE",
       "The provider lists no usable model. Configure AI_DEFAULT_MODEL in apps/api/.env.",
-    );
-  discoveredModels.set(`${credential.provider}:${credential.apiKey.length}`, {
-    model,
-    expires: Date.now() + DISCOVERY_TTL_MS,
-  });
-  return model;
+    )
+  );
 }
 /** A server-managed credential completed with its discovered model. */
 async function withDiscoveredModel(credential: ServerAiCredential): Promise<{

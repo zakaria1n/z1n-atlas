@@ -104,7 +104,8 @@ export function createProviderAdapter(
               (!item.supportedOutputTypes ||
                 item.supportedOutputTypes.some(
                   (type) => type.toLowerCase() === "text",
-                )),
+                )) &&
+              !/(?:tts|audio|image|embedding|imagen|veo|live)/i.test(item.name),
           )
           .map((item) => ({
             id: item.name.slice(7),
