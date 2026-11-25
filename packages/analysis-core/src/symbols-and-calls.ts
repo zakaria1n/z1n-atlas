@@ -1,39 +1,62 @@
-import { Node, SyntaxKind, ts, type Symbol as MorphSymbol } from "ts-morph";
+import {
+  Node,
+  SyntaxKind,
+  ts,
+  VariableDeclarationKind,
+  type CallExpression,
+  type Symbol as MorphSymbol,
+} from "ts-morph";
+import type { GraphNode } from "@z1n/contracts";
 import {
   relative,
   type AnalysisContext,
   type SymbolContext,
 } from "./framework-graph";
 import type { SymbolNames } from "./source-nodes";
+import { nodeId } from "./workspace";
 
 export type SymbolIndex = {
   /** Tracked declarations keyed by symbol node id. */
   declarations: Map<string, Node>;
+  /** The symbol node created for each tracked declaration, keyed by the same id. */
+  nodes: Map<string, GraphNode>;
   /** Ids of all symbol nodes. */
   ids: Set<string>;
   /** Ids of function and method nodes, which own calls and references written inside them. */
   owners: Set<string>;
 };
+export type SymbolResult = {
+  symbols: SymbolIndex;
+  unresolvedCalls: number;
+  /** Target of each call that resolved to a tracked declaration, keyed by the call. */
+  callTargets: Map<CallExpression, string>;
+};
 
-function nameNode(node: Node): Node | undefined {
+/** The name of a tracked declaration, or undefined for a nameless function. */
+export function nameNode(node: Node | undefined): Node | undefined {
   if (
     Node.isFunctionDeclaration(node) ||
     Node.isMethodDeclaration(node) ||
     Node.isClassDeclaration(node) ||
     Node.isVariableDeclaration(node) ||
-    Node.isPropertyDeclaration(node)
+    Node.isPropertyDeclaration(node) ||
+    Node.isPropertyAssignment(node)
   )
     return node.getNameNode();
   return undefined;
 }
 function kind(node: Node): "function" | "method" | "class" {
   if (Node.isClassDeclaration(node)) return "class";
-  if (Node.isMethodDeclaration(node) || Node.isPropertyDeclaration(node))
+  if (
+    Node.isMethodDeclaration(node) ||
+    Node.isPropertyDeclaration(node) ||
+    Node.isPropertyAssignment(node)
+  )
     return "method";
   return "function";
 }
 export function symbolId(node: Node): string {
-  return `${relative(node)}#${node.getStart()}`;
+  return nodeId(relative(node), node.getStart());
 }
 export function unalias(
   symbol: MorphSymbol | undefined,
@@ -74,46 +97,118 @@ export function mayResolve(node: Node, names: SymbolNames): boolean {
   return true;
 }
 
-export function addSymbolsAndCalls(context: AnalysisContext): {
-  symbols: SymbolIndex;
-  unresolvedCalls: number;
-} {
+/**
+ * The value of an expression that is a fixed string: a string literal, a
+ * constant that holds one, or a concatenation of these. Anything that can
+ * differ at runtime yields null.
+ */
+export function constantString(
+  node: Node | undefined,
+  depth = 4,
+): string | null {
+  if (!node || depth < 0) return null;
+  if (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node))
+    return node.getLiteralValue();
+  if (Node.isParenthesizedExpression(node))
+    return constantString(node.getExpression(), depth - 1);
+  if (
+    Node.isBinaryExpression(node) &&
+    node.getOperatorToken().getKind() === SyntaxKind.PlusToken
+  ) {
+    const left = constantString(node.getLeft(), depth - 1);
+    const right =
+      left === null ? null : constantString(node.getRight(), depth - 1);
+    return left !== null && right !== null ? left + right : null;
+  }
+  if (Node.isIdentifier(node)) {
+    const declaration = unalias(node.getSymbol())
+      ?.getDeclarations()
+      .find(Node.isVariableDeclaration);
+    if (
+      !declaration ||
+      declaration.getVariableStatement()?.getDeclarationKind() !==
+        VariableDeclarationKind.Const
+    )
+      return null;
+    return constantString(declaration.getInitializer(), depth - 1);
+  }
+  return null;
+}
+
+export function addSymbolsAndCalls(context: AnalysisContext): SymbolResult {
   const { graph, names } = context;
   const declarations = new Map<string, Node>();
-  for (const { path, declarations: tracked } of context.sources)
+  function addSymbol(
+    path: string,
+    node: Node,
+    name: string,
+    symbolKind: "function" | "method" | "class",
+    proof: Node,
+    snippet: string,
+    proofEndLine: number,
+  ) {
+    const id = symbolId(node);
+    declarations.set(id, node);
+    graph.nodes.push({
+      id,
+      path,
+      exports: [],
+      kind: symbolKind,
+      name,
+      startLine: node.getStartLineNumber(),
+      endLine: node.getEndLineNumber(),
+    });
+    const evidenceId = `${path}:${proof.getStart()}:contains:${id}`;
+    graph.evidence.push({
+      id: evidenceId,
+      filePath: path,
+      startLine: proof.getStartLineNumber(),
+      endLine: proofEndLine,
+      snippet,
+    });
+    graph.edges.push({
+      id: evidenceId,
+      source: path,
+      target: id,
+      kind: "contains",
+      confidence: "confirmed",
+      evidenceId,
+    });
+  }
+  for (const { path, declarations: tracked, anonymous } of context.sources) {
     for (const declaration of tracked) {
       const name = nameNode(declaration);
       if (!name) continue;
-      const id = symbolId(declaration);
-      declarations.set(id, declaration);
-      graph.nodes.push({
-        id,
+      addSymbol(
         path,
-        exports: [],
-        kind: kind(declaration),
-        name: name.getText(),
-        startLine: declaration.getStartLineNumber(),
-        endLine: declaration.getEndLineNumber(),
-      });
-      const evidenceId = `${path}:${name.getStart()}:contains:${id}`;
-      graph.evidence.push({
-        id: evidenceId,
-        filePath: path,
-        startLine: name.getStartLineNumber(),
-        endLine: name.getEndLineNumber(),
-        snippet: name.getText(),
-      });
-      graph.edges.push({
-        id: evidenceId,
-        source: path,
-        target: id,
-        kind: "contains",
-        confidence: "confirmed",
-        evidenceId,
-      });
+        declaration,
+        name.getText(),
+        kind(declaration),
+        name,
+        name.getText(),
+        name.getEndLineNumber(),
+      );
     }
+    // A nameless function has no name to point at, so its first line is the
+    // evidence that the file contains it.
+    for (const { node, name } of anonymous) {
+      const startLine = node.getStartLineNumber();
+      addSymbol(
+        path,
+        node,
+        name,
+        "function",
+        node,
+        node.getText().split(/\r\n|\r|\n/)[0],
+        startLine,
+      );
+    }
+  }
   const symbols: SymbolIndex = {
     declarations,
+    nodes: new Map(
+      graph.nodes.filter((node) => node.kind).map((node) => [node.id, node]),
+    ),
     ids: new Set(declarations.keys()),
     owners: new Set(
       [...declarations]
@@ -121,14 +216,24 @@ export function addSymbolsAndCalls(context: AnalysisContext): {
         .map(([id]) => id),
     ),
   };
+  const callTargets = new Map<CallExpression, string>();
   let unresolvedCalls = 0;
   for (const { path, source, identifiers, calls } of context.sources) {
+    const reactFile = context.reactFiles.has(path);
     for (const identifier of identifiers) {
       if (
         identifier.getFirstAncestor(
           (node) =>
             Node.isImportDeclaration(node) || Node.isExportDeclaration(node),
         )
+      )
+        continue;
+      const parent = identifier.getParent();
+      // A rendered component is reported as a render, not as a reference.
+      if (
+        reactFile &&
+        (Node.isJsxOpeningElement(parent) ||
+          Node.isJsxSelfClosingElement(parent))
       )
         continue;
       const symbol = unalias(identifier.getSymbol());
@@ -145,7 +250,6 @@ export function addSymbolsAndCalls(context: AnalysisContext): {
         )
       )
         continue;
-      const parent = identifier.getParent();
       if (
         Node.isCallExpression(parent) &&
         parent.getExpression() === identifier
@@ -214,6 +318,7 @@ export function addSymbolsAndCalls(context: AnalysisContext): {
         parent = parent.getParent();
       }
       const target = unique[0];
+      callTargets.set(call, target);
       const id = `${path}:${call.getStart()}:calls:${target}`;
       graph.evidence.push({
         id,
@@ -232,7 +337,7 @@ export function addSymbolsAndCalls(context: AnalysisContext): {
       });
     }
   }
-  return { symbols, unresolvedCalls };
+  return { symbols, unresolvedCalls, callTargets };
 }
 
 export function resolveTarget(

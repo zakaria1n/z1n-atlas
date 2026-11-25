@@ -41,10 +41,13 @@ export function addNextEntrypoints(context: SymbolContext): number {
       evidenceId,
       supportingEvidenceIds: [manifestEvidenceId],
     });
+    // A page may be a nameless default export, which is a node of its own.
     const candidate = fn
       ? symbolId(fn)
       : assignment
-        ? resolveTarget(assignment.getExpression(), context)
+        ? (resolveTarget(assignment.getExpression(), context) ??
+          context.symbols.nodes.get(symbolId(assignment.getExpression()))?.id ??
+          null)
         : null;
     if (candidate && context.graph.nodes.some((node) => node.id === candidate))
       context.graph.edges.push({

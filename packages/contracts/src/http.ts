@@ -144,6 +144,17 @@ export const graphEdgeSchema = z.object({
   evidenceId: z.string(),
   supportingEvidenceIds: z.array(z.string()).optional(),
 });
+export const graphUnresolvedSchema = z
+  .object({
+    id: z.string().min(1).max(2000),
+    filePath: z.string().min(1).max(500),
+    startLine: z.number().int().positive(),
+    endLine: z.number().int().positive(),
+    snippet: z.string().max(400),
+    kind: z.enum(["import", "request", "route", "handler"]),
+    reason: z.string().min(1).max(200),
+  })
+  .strict();
 export const codeGraphSchema = z.object({
   analysisId: z.uuid().optional(),
   nodes: z.array(graphNodeSchema),
@@ -151,6 +162,7 @@ export const codeGraphSchema = z.object({
   evidence: z.array(graphEvidenceSchema),
   unresolved: z.number().int().nonnegative(),
   unresolvedCalls: z.number().int().nonnegative(),
+  unresolvedItems: z.array(graphUnresolvedSchema).max(300).optional(),
   notice: z.string(),
 });
 export const analysisStageSchema = z.enum([

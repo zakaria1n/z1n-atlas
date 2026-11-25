@@ -1,42 +1,108 @@
 import {
   Node,
   SyntaxKind,
+  ts,
   VariableDeclarationKind,
   type CallExpression,
+  type ParameterDeclaration,
   type VariableDeclaration,
 } from "ts-morph";
 import {
   addNode,
+  addUnresolved,
   evidence,
   relative,
   type HttpRoute as Route,
   type SymbolContext as Context,
 } from "./framework-graph";
 import { addNextRoutes } from "./next-routes";
-import { ownerId, resolveTarget, symbolId, unalias } from "./symbols-and-calls";
+import {
+  constantString,
+  nameNode,
+  ownerId,
+  resolveTarget,
+  symbolId,
+  unalias,
+} from "./symbols-and-calls";
+import { httpVerbs } from "./source-nodes";
 
-function literal(node: Node | undefined): string | null {
-  return node && Node.isStringLiteral(node) ? node.getLiteralValue() : null;
-}
-function importedFromExpress(node: Node, name: "default" | "Router"): boolean {
+type Confidence = "confirmed" | "framework" | "heuristic";
+type Request = {
+  call: CallExpression;
+  url: string;
+  method: string;
+  confidence: Confidence;
+  supportingEvidenceIds?: string[];
+};
+/**
+ * A function whose single `fetch` sends what the function itself receives:
+ * the usual shape of an API client. Its requests are reported where it is
+ * called with a literal address, because that is where the address is known.
+ */
+type Forwarder = {
+  name: Node;
+  fetchCall: CallExpression;
+  urlIndex: number;
+  method: { value: string } | { argumentIndex: number };
+};
+const clientVerbs = new Set([
+  "get",
+  "post",
+  "put",
+  "patch",
+  "delete",
+  "head",
+  "options",
+  "request",
+]);
+
+/** Whether an identifier is imported from a module under its own name or as the default import. */
+function importedFrom(
+  node: Node,
+  module: string,
+  name: "default" | string,
+): boolean {
   if (!Node.isIdentifier(node)) return false;
   const declarations = node.getSymbol()?.getDeclarations() ?? [];
   return declarations.some((declaration) => {
     const imp = declaration.getFirstAncestorByKind(
       SyntaxKind.ImportDeclaration,
     );
-    if (!imp || imp.getModuleSpecifierValue() !== "express") return false;
+    if (!imp || imp.getModuleSpecifierValue() !== module) return false;
     return name === "default"
       ? imp.getDefaultImport()?.getText() === node.getText()
       : imp
           .getNamedImports()
           .some(
             (item) =>
-              item.getName() === "Router" &&
+              item.getName() === name &&
               (item.getAliasNode()?.getText() ?? item.getName()) ===
                 node.getText(),
           );
   });
+}
+function isAxios(node: Node): boolean {
+  return (
+    importedFrom(node, "axios", "default") ||
+    importedFrom(node, "axios", "axios")
+  );
+}
+/**
+ * Reads the HTTP method from request options. Returns undefined when the
+ * options are not a plain object with a literal method.
+ */
+function methodFromOptions(options: Node | undefined): string | undefined {
+  if (options === undefined) return "GET";
+  if (
+    !Node.isObjectLiteralExpression(options) ||
+    options.getProperties().some(Node.isSpreadAssignment)
+  )
+    return undefined;
+  const field = options.getProperty("method");
+  if (!field) return "GET";
+  if (!Node.isPropertyAssignment(field)) return undefined;
+  const value = constantString(field.getInitializer());
+  return value === null ? undefined : value.toUpperCase();
 }
 function ownerDeclaration(node: Node): string | null {
   const seen = new Set<string>();
@@ -86,6 +152,95 @@ function propertyCall(
 function joinPath(prefix: string, route: string): string {
   return `${prefix.replace(/\/$/, "")}/${route.replace(/^\//, "")}` || "/";
 }
+/**
+ * The parameter of `owner` that an argument of its `fetch` stands for. The
+ * parameter must belong to a function written inside the owner: a function
+ * assigned to a member is owned by that member, and a value captured from an
+ * outer scope is not an argument of the owner.
+ */
+function forwardedParameter(
+  argument: Node | undefined,
+  owner: Node | undefined,
+): ParameterDeclaration | null {
+  if (!argument || !owner || !Node.isIdentifier(argument)) return null;
+  const parameter = unalias(argument.getSymbol())
+    ?.getDeclarations()
+    .find(Node.isParameterDeclaration);
+  if (!parameter) return null;
+  const signature = enclosingSignature(parameter);
+  return owner.getStart() <= signature.getStart() &&
+    signature.getEnd() <= owner.getEnd()
+    ? parameter
+    : null;
+}
+/**
+ * The position of a parameter in its function. The parameter list of the
+ * function is read instead of the parameter's ancestors, whose shape differs
+ * between compiler versions.
+ */
+function parameterIndex(parameter: ParameterDeclaration): number {
+  return enclosingSignature(parameter).parameters.indexOf(
+    parameter.compilerNode as ts.ParameterDeclaration,
+  );
+}
+function signatureOf(node: ts.Node): ts.SignatureDeclaration | undefined {
+  return ts.isFunctionDeclaration(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+    ? node
+    : undefined;
+}
+/** The function a parameter belongs to. Its parent is the function or the parameter list inside it. */
+function enclosingSignature(
+  parameter: ParameterDeclaration,
+): ts.SignatureDeclaration {
+  const parent = parameter.compilerNode.parent;
+  const signature = signatureOf(parent) ?? signatureOf(parent.parent);
+  if (!signature)
+    throw new Error("A parameter is declared outside a function.");
+  return signature;
+}
+/**
+ * Resolves a route handler. A handler written inline is a node already, named
+ * after the route as written at its call; the complete route is known only
+ * here, so the node takes that name.
+ */
+function handlerTarget(
+  handler: Node,
+  context: Context,
+  routeName: string,
+): string | null {
+  const target =
+    resolveTarget(handler, context) ??
+    context.symbols.nodes.get(symbolId(handler))?.id;
+  if (!target) return null;
+  const node = context.symbols.nodes.get(target);
+  if (node?.name?.endsWith(" callback")) node.name = `${routeName} handler`;
+  return target;
+}
+function isLocalFetch(expression: Node): boolean {
+  return (expression.getSymbol()?.getDeclarations() ?? []).some(
+    (declaration) =>
+      relative(declaration).startsWith("src/") ||
+      declaration.getSourceFile().getFilePath().startsWith("/workspace/"),
+  );
+}
+function axiosProof(node: Node): Node | undefined {
+  const instance = unalias(node.getSymbol())
+    ?.getDeclarations()
+    .find(Node.isVariableDeclaration);
+  if (instance) return instance;
+  const imp = node
+    .getSymbol()
+    ?.getDeclarations()?.[0]
+    ?.getFirstAncestorByKind(SyntaxKind.ImportDeclaration);
+  return imp && imp.getModuleSpecifierValue() === "axios" ? imp : undefined;
+}
+
 export function addHttpRelationships(context: Context): number {
   const { graph } = context;
   const owners = new Map<string, "app" | "router">();
@@ -96,13 +251,16 @@ export function addHttpRelationships(context: Context): number {
       const initializer = variable.getInitializer();
       if (!initializer || !Node.isCallExpression(initializer)) continue;
       const expr = initializer.getExpression();
-      if (importedFromExpress(expr, "default"))
+      if (
+        importedFrom(expr, "express", "default") ||
+        importedFrom(expr, "fastify", "default")
+      )
         owners.set(symbolId(variable), "app");
       else if (
-        importedFromExpress(expr, "Router") ||
+        importedFrom(expr, "express", "Router") ||
         (Node.isPropertyAccessExpression(expr) &&
           expr.getName() === "Router" &&
-          importedFromExpress(expr.getExpression(), "default"))
+          importedFrom(expr.getExpression(), "express", "default"))
       )
         owners.set(symbolId(variable), "router");
     }
@@ -122,7 +280,7 @@ export function addHttpRelationships(context: Context): number {
     )
       continue;
     const parent = ownerDeclaration(pc.owner)!,
-      prefix = literal(args[0]),
+      prefix = constantString(args[0]),
       target = args[1] && ownerDeclaration(args[1]);
     if (
       !prefix ||
@@ -170,14 +328,38 @@ export function addHttpRelationships(context: Context): number {
   unresolved += nextRoutes.unresolved;
   for (const call of calls) {
     const pc = propertyCall(call);
-    if (!pc || !["get", "post", "put", "patch", "delete"].includes(pc.method))
+    if (!pc || !httpVerbs.has(pc.method)) continue;
+    const args = call.getArguments();
+    let routePath = constantString(args[0]);
+    let router = pc.owner;
+    let chain: CallExpression | undefined;
+    // `app.route('/x').get(handler)` carries its path on the outer call.
+    if (routePath === null && Node.isCallExpression(pc.owner)) {
+      const outer = propertyCall(pc.owner);
+      const [outerPath] = pc.owner.getArguments();
+      if (
+        outer?.method === "route" &&
+        constantString(outerPath)?.startsWith("/")
+      ) {
+        routePath = constantString(outerPath);
+        chain = pc.owner;
+        router = outer.owner;
+      }
+    }
+    const owner = ownerDeclaration(router);
+    if (!owner || !owners.get(owner)) continue;
+    const handlers = chain ? args : args.slice(1);
+    if (!routePath || !validPath(routePath)) {
+      unresolved++;
+      addUnresolved(
+        args[0] ?? call,
+        context,
+        "route",
+        `The path of this ${pc.method} route is not a literal value.`,
+      );
       continue;
-    const owner = ownerDeclaration(pc.owner),
-      ownerType = owner && owners.get(owner);
-    if (!owner || !ownerType) continue;
-    const args = call.getArguments(),
-      routePath = literal(args[0]);
-    if (args.length < 2 || !routePath || !validPath(routePath)) {
+    }
+    if (!handlers.length) {
       unresolved++;
       continue;
     }
@@ -189,16 +371,14 @@ export function addHttpRelationships(context: Context): number {
     for (const mount of prefixes) {
       const route = joinPath(mount.prefix, routePath),
         filePath = relative(call),
+        routeName = `${pc.method.toUpperCase()} ${route}`,
         nodeId = `${filePath}#route:${call.getStart()}:${encodeURIComponent(route)}`,
         evidenceId = evidence(call, graph),
-        mountEvidenceIds = mount.calls.map((item) => evidence(item, graph));
-      addNode(
-        call,
-        nodeId,
-        `${pc.method.toUpperCase()} ${route}`,
-        "route",
-        graph,
-      );
+        mountEvidenceIds = [
+          ...mount.calls.map((item) => evidence(item, graph)),
+          ...(chain ? [evidence(chain, graph)] : []),
+        ];
+      addNode(call, nodeId, routeName, "route", graph);
       const containerId = `${nodeId}:contains`;
       graph.edges.push({
         id: containerId,
@@ -220,10 +400,16 @@ export function addHttpRelationships(context: Context): number {
           ? mountEvidenceIds
           : undefined,
       });
-      for (const handler of args.slice(1)) {
-        const target = resolveTarget(handler, context);
+      for (const handler of handlers) {
+        const target = handlerTarget(handler, context, routeName);
         if (!target) {
           unresolved++;
+          addUnresolved(
+            handler,
+            context,
+            "handler",
+            `The handler of ${routeName} could not be resolved to an analyzed function.`,
+          );
           continue;
         }
         graph.edges.push({
@@ -232,54 +418,221 @@ export function addHttpRelationships(context: Context): number {
           target,
           kind: "handles",
           confidence: "framework",
-          evidenceId,
           supportingEvidenceIds: mountEvidenceIds.length
             ? mountEvidenceIds
             : undefined,
+          evidenceId,
         });
       }
     }
   }
+  const requests: Request[] = [];
+  const fetches: { call: CallExpression; args: Node[]; owner: string }[] = [];
+  const fetchesInOwner = new Map<string, number>();
   for (const call of calls) {
-    const expr = call.getExpression();
-    if (!Node.isIdentifier(expr) || expr.getText() !== "fetch") continue;
+    const expression = call.getExpression();
     if (
-      (expr.getSymbol()?.getDeclarations() ?? []).some(
-        (declaration) =>
-          relative(declaration).startsWith("src/") ||
-          declaration.getSourceFile().getFilePath().startsWith("/workspace/"),
-      )
+      !Node.isIdentifier(expression) ||
+      expression.getText() !== "fetch" ||
+      isLocalFetch(expression)
     )
       continue;
-    const args = call.getArguments(),
-      url = literal(args[0]);
+    const owner = ownerId(call, context);
+    fetches.push({ call, args: call.getArguments(), owner });
+    if (context.symbols.owners.has(owner))
+      fetchesInOwner.set(owner, (fetchesInOwner.get(owner) ?? 0) + 1);
+  }
+  const forwarders = new Map<string, Forwarder>();
+  const forwarded = new Set<CallExpression>();
+  for (const { call, args, owner } of fetches) {
+    if (
+      constantString(args[0]) !== null ||
+      fetchesInOwner.get(owner) !== 1 ||
+      !context.symbols.owners.has(owner)
+    )
+      continue;
+    const ownerNode = context.symbols.declarations.get(owner);
+    const name = nameNode(ownerNode);
+    const url = forwardedParameter(args[0], ownerNode);
+    if (!name || !url) continue;
+    // The method is fixed when the wrapper states it, and otherwise comes
+    // from the options each caller passes.
+    const stated = methodFromOptions(args[1]);
+    const options =
+      stated === undefined ? forwardedParameter(args[1], ownerNode) : null;
+    let method: Forwarder["method"];
+    if (stated !== undefined) method = { value: stated };
+    else if (options) method = { argumentIndex: parameterIndex(options) };
+    else continue;
+    forwarders.set(owner, {
+      name,
+      fetchCall: call,
+      urlIndex: parameterIndex(url),
+      method,
+    });
+    forwarded.add(call);
+  }
+  for (const call of calls) {
+    const target = context.callTargets.get(call);
+    const forwarder = target ? forwarders.get(target) : undefined;
+    if (!forwarder) continue;
+    const args = call.getArguments();
+    const name = forwarder.name.getText();
+    const url = constantString(args[forwarder.urlIndex]);
     if (!url || !validPath(url)) {
       unresolved++;
+      addUnresolved(
+        args[forwarder.urlIndex] ?? call,
+        context,
+        "request",
+        `The address passed to ${name}() is not a literal path.`,
+      );
       continue;
     }
-    let method = "GET";
-    if (args[1]) {
-      if (
-        !Node.isObjectLiteralExpression(args[1]) ||
-        args[1].getProperties().some(Node.isSpreadAssignment)
-      ) {
-        unresolved++;
-        continue;
-      }
-      const field = args[1].getProperty("method");
-      if (field) {
-        if (!Node.isPropertyAssignment(field)) {
-          unresolved++;
-          continue;
-        }
-        const m = literal(field.getInitializer());
-        if (!m) {
-          unresolved++;
-          continue;
-        }
-        method = m.toUpperCase();
-      }
+    const forwardedOptions =
+      "argumentIndex" in forwarder.method
+        ? args[forwarder.method.argumentIndex]
+        : undefined;
+    const method =
+      "value" in forwarder.method
+        ? forwarder.method.value
+        : methodFromOptions(forwardedOptions);
+    if (!method) {
+      unresolved++;
+      addUnresolved(
+        forwardedOptions ?? call,
+        context,
+        "request",
+        `The HTTP method passed to ${name}() is not a literal value.`,
+      );
+      continue;
     }
+    requests.push({
+      call,
+      url,
+      method,
+      confidence: "heuristic",
+      supportingEvidenceIds: [
+        evidence(forwarder.fetchCall, graph),
+        evidence(forwarder.name, graph),
+      ],
+    });
+  }
+  for (const { call, args } of fetches) {
+    // A forwarded address is reported at the call sites of its wrapper.
+    if (forwarded.has(call)) continue;
+    const url = constantString(args[0]);
+    if (!url || !validPath(url)) {
+      unresolved++;
+      addUnresolved(
+        args[0] ?? call,
+        context,
+        "request",
+        "The address of this request is not a literal path.",
+      );
+      continue;
+    }
+    const method = methodFromOptions(args[1]);
+    if (!method) {
+      unresolved++;
+      addUnresolved(
+        args[1],
+        context,
+        "request",
+        "The HTTP method of this request is not a literal value.",
+      );
+      continue;
+    }
+    requests.push({ call, url, method, confidence: "confirmed" });
+  }
+  const axiosInstances = new Map<string, string>();
+  for (const { callVariables } of context.sources)
+    for (const variable of callVariables) {
+      const initializer = variable.getInitializer();
+      if (!initializer || !Node.isCallExpression(initializer)) continue;
+      const expr = initializer.getExpression();
+      if (
+        !Node.isPropertyAccessExpression(expr) ||
+        expr.getName() !== "create" ||
+        !Node.isIdentifier(expr.getExpression()) ||
+        !isAxios(expr.getExpression())
+      )
+        continue;
+      const [config] = initializer.getArguments();
+      let base = "";
+      if (config !== undefined) {
+        if (!Node.isObjectLiteralExpression(config)) continue;
+        const field = config.getProperty("baseURL");
+        if (field) {
+          if (!Node.isPropertyAssignment(field)) continue;
+          const value = constantString(field.getInitializer());
+          if (value === null || !validPath(value)) continue;
+          base = value;
+        }
+      }
+      axiosInstances.set(symbolId(variable), base);
+    }
+  for (const call of calls) {
+    const pc = propertyCall(call);
+    if (!pc || !clientVerbs.has(pc.method)) continue;
+    const direct = Node.isIdentifier(pc.owner) && isAxios(pc.owner);
+    const base = direct
+      ? ""
+      : axiosInstances.get(ownerDeclaration(pc.owner) ?? "");
+    if (base === undefined) continue;
+    const args = call.getArguments();
+    let url: string | null = null;
+    let method: string | undefined;
+    if (pc.method === "request") {
+      const config = args[0];
+      if (config && Node.isObjectLiteralExpression(config)) {
+        const field = config.getProperty("url");
+        url =
+          field && Node.isPropertyAssignment(field)
+            ? constantString(field.getInitializer())
+            : null;
+        method = methodFromOptions(config);
+      }
+    } else {
+      url = constantString(args[0]);
+      method = pc.method.toUpperCase();
+    }
+    if (!url || !validPath(url)) {
+      unresolved++;
+      addUnresolved(
+        args[0] ?? call,
+        context,
+        "request",
+        "The address of this axios request is not a literal path.",
+      );
+      continue;
+    }
+    const proof = axiosProof(pc.owner);
+    if (!method || !proof) {
+      unresolved++;
+      addUnresolved(
+        args[0] ?? call,
+        context,
+        "request",
+        "This axios request has no literal HTTP method.",
+      );
+      continue;
+    }
+    requests.push({
+      call,
+      url: base ? joinPath(base, url) : url,
+      method,
+      confidence: "framework",
+      supportingEvidenceIds: [evidence(proof, graph)],
+    });
+  }
+  for (const {
+    call,
+    url,
+    method,
+    confidence,
+    supportingEvidenceIds,
+  } of requests) {
     const filePath = relative(call),
       id = `${filePath}#http:${call.getStart()}`,
       evidenceId = evidence(call, graph);
@@ -289,14 +642,27 @@ export function addHttpRelationships(context: Context): number {
       source: ownerId(call, context),
       target: id,
       kind: "requests",
-      confidence: "confirmed",
+      confidence,
       evidenceId,
+      supportingEvidenceIds,
     });
     const matched = routes.filter(
-      (route) => route.path === url && route.method === method,
+      (route) =>
+        route.path === url &&
+        (route.method === method ||
+          route.method === "ALL" ||
+          route.method === "ANY"),
     );
     if (matched.length !== 1) {
       unresolved++;
+      addUnresolved(
+        call,
+        context,
+        "request",
+        matched.length
+          ? `More than one analyzed route matches ${method} ${url}.`
+          : `No analyzed route matches ${method} ${url}.`,
+      );
       continue;
     }
     const route = matched[0];

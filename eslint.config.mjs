@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Synthetic projects that exercise the analyzer, kept verbatim as test data.
+    "fixtures/**",
   ]),
 ]);
 

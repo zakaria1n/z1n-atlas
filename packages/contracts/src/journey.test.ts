@@ -23,28 +23,23 @@ const graph: CodeGraph = {
   unresolvedCalls: 0,
   notice: "",
 };
+const journey = (values: Record<string, unknown>) =>
+  journeySchema.parse({
+    uncertainties: ["unknown"],
+    mode: "static",
+    ...values,
+  });
 describe("journey references", () => {
   it("accepts directed paths and explicit unknown boundaries", () => {
     expect(
       journeyIsValid(
-        journeySchema.parse({
-          nodeIds: ["a", "b"],
-          edgeIds: ["edge"],
-          uncertainties: ["Static path only."],
-        }),
+        journey({ nodeIds: ["a", "b"], edgeIds: ["edge"] }),
         graph,
       ),
     ).toBe(true);
-    expect(
-      journeyIsValid(
-        journeySchema.parse({
-          nodeIds: [],
-          edgeIds: [],
-          uncertainties: ["No match."],
-        }),
-        graph,
-      ),
-    ).toBe(true);
+    expect(journeyIsValid(journey({ nodeIds: [], edgeIds: [] }), graph)).toBe(
+      true,
+    );
   });
   it("rejects invented, reversed, disconnected and cyclic paths", () => {
     for (const path of [
@@ -53,7 +48,48 @@ describe("journey references", () => {
       { nodeIds: ["a", "b", "a"], edgeIds: ["edge", "edge"] },
     ])
       expect(
-        journeyIsValid({ ...path, uncertainties: ["unknown"] }, graph),
+        journeyIsValid(
+          { ...path, mode: "static", uncertainties: ["unknown"] },
+          graph,
+        ),
       ).toBe(false);
+  });
+  it("accepts explanations for path nodes and rejects foreign or duplicated ones", () => {
+    expect(
+      journeyIsValid(
+        journey({
+          nodeIds: ["a", "b"],
+          edgeIds: ["edge"],
+          explanations: [
+            { nodeId: "a", text: "The form the user fills in." },
+            { nodeId: "b", text: "Called with the input." },
+          ],
+        }),
+        graph,
+      ),
+    ).toBe(true);
+    expect(
+      journeyIsValid(
+        journey({
+          nodeIds: ["a", "b"],
+          edgeIds: ["edge"],
+          explanations: [{ nodeId: "invented", text: "Not on the path." }],
+        }),
+        graph,
+      ),
+    ).toBe(false);
+    expect(
+      journeyIsValid(
+        journey({
+          nodeIds: ["a", "b"],
+          edgeIds: ["edge"],
+          explanations: [
+            { nodeId: "a", text: "First." },
+            { nodeId: "a", text: "Again." },
+          ],
+        }),
+        graph,
+      ),
+    ).toBe(false);
   });
 });

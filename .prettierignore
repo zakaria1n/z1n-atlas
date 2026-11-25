@@ -4,3 +4,5 @@ node_modules
 .analysis-build
 pnpm-lock.yaml
 coverage
+# Synthetic projects that exercise the analyzer; kept verbatim as test data.
+fixtures

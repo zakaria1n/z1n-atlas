@@ -5,6 +5,7 @@ import {
 } from "ts-morph";
 import {
   addNode,
+  addUnresolved,
   evidence,
   type HttpRoute,
   type SymbolContext,
@@ -22,6 +23,24 @@ const methods = new Set([
   "OPTIONS",
 ]);
 
+type ApiRoute =
+  { router: "app"; suffix: string } | { router: "pages"; suffix: string };
+/**
+ * App Router directories expose one route per exported method, while a Pages
+ * Router file handles every method with its default export.
+ */
+function apiRoute(path: string): ApiRoute | null {
+  const app =
+    /(?:^|\/)app\/api\/(.+)\/route\.[cm]?[jt]s$/i.exec(path) ??
+    /(?:^|\/)app\/api\/(route\.[cm]?[jt]s)$/i.exec(path);
+  if (app)
+    return { router: "app", suffix: app[1].startsWith("route.") ? "" : app[1] };
+  const pages = /(?:^|\/)pages\/api\/(.+)\.[jt]sx?$/i.exec(path);
+  if (pages)
+    return { router: "pages", suffix: pages[1] === "index" ? "" : pages[1] };
+  return null;
+}
+
 export function addNextRoutes(context: SymbolContext): {
   routes: HttpRoute[];
   unresolved: number;
@@ -30,24 +49,72 @@ export function addNextRoutes(context: SymbolContext): {
   const routes: HttpRoute[] = [];
   let unresolved = 0;
   for (const { path, source, declarations } of context.sources) {
-    const match =
-      /(?:^|\/)app\/api\/(.+)\/route\.[cm]?[jt]s$/i.exec(path) ??
-      /(?:^|\/)app\/api\/(route\.[cm]?[jt]s)$/i.exec(path);
-    if (!match) continue;
+    const api = apiRoute(path);
+    if (!api) continue;
     const manifest = context.manifests.next(path);
     if (!manifest) {
       unresolved++;
       continue;
     }
-    const suffix = match[1].startsWith("route.") ? "" : match[1];
     if (
-      suffix &&
-      suffix.split("/").some((part) => !part || /[\[\]()]/.test(part))
+      api.suffix &&
+      api.suffix.split("/").some((part) => !part || /[\[\]()]/.test(part))
     ) {
       unresolved++;
       continue;
     }
-    const pathname = `/api${suffix ? `/${suffix}` : ""}`;
+    const pathname = `/api${api.suffix ? `/${api.suffix}` : ""}`;
+    const manifestEvidenceId = addManifestEvidence(manifest, graph);
+    if (api.router === "pages") {
+      const handler = source
+        .getFunctions()
+        .find((item) => item.isDefaultExport());
+      const assignment = handler
+        ? undefined
+        : source.getExportAssignments().find((item) => !item.isExportEquals());
+      const declaration = handler ?? assignment?.getExpression();
+      const target =
+        declaration && context.symbols.nodes.get(symbolId(declaration));
+      if (!declaration || !target) {
+        unresolved++;
+        continue;
+      }
+      const routeName = `ANY ${pathname}`;
+      if (target.name === "default export")
+        target.name = `${routeName} handler`;
+      const name = handler?.getNameNode();
+      // A nameless default export already carries the evidence of its first line.
+      const evidenceId = name
+        ? evidence(name, graph)
+        : `${path}:${declaration.getStart()}:contains:${target.id}`;
+      const nodeId = `${path}#next-route:${declaration.getStart()}:ANY`;
+      addNode(declaration, nodeId, routeName, "route", graph);
+      graph.edges.push({
+        id: `${nodeId}:contains`,
+        source: path,
+        target: nodeId,
+        kind: "contains",
+        confidence: "framework",
+        evidenceId,
+        supportingEvidenceIds: [manifestEvidenceId],
+      });
+      graph.edges.push({
+        id: `${nodeId}:handles:${target.id}`,
+        source: nodeId,
+        target: target.id,
+        kind: "handles",
+        confidence: "framework",
+        evidenceId,
+      });
+      routes.push({
+        nodeId,
+        path: pathname,
+        method: "ANY",
+        evidenceId,
+        supportingEvidenceIds: [manifestEvidenceId],
+      });
+      continue;
+    }
     const localExports = localExportNames(source);
     const handlers = declarations.filter(
       (node): node is FunctionDeclaration | VariableDeclaration => {
@@ -71,7 +138,6 @@ export function addNextRoutes(context: SymbolContext): {
       const method = declaration.getName();
       const name = declaration.getNameNode();
       if (!method || !name) continue;
-      const manifestEvidenceId = addManifestEvidence(manifest, graph);
       const nodeId = `${path}#next-route:${declaration.getStart()}:${method}`,
         evidenceId = evidence(name, graph);
       addNode(declaration, nodeId, `${method} ${pathname}`, "route", graph);
@@ -85,7 +151,8 @@ export function addNextRoutes(context: SymbolContext): {
         supportingEvidenceIds: [manifestEvidenceId],
       });
       const target = symbolId(declaration);
-      if (graph.nodes.some((node) => node.id === target))
+      const handler = context.symbols.nodes.get(target);
+      if (handler) {
         graph.edges.push({
           id: `${nodeId}:handles:${target}`,
           source: nodeId,
@@ -94,6 +161,15 @@ export function addNextRoutes(context: SymbolContext): {
           confidence: "framework",
           evidenceId,
         });
+      } else {
+        unresolved++;
+        addUnresolved(
+          declaration,
+          context,
+          "handler",
+          `${method} ${pathname} is not an analyzed function.`,
+        );
+      }
       routes.push({
         nodeId,
         path: pathname,

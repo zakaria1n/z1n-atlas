@@ -1,0 +1,9 @@
+{
+  "name": "next-pages-router-fixture",
+  "private": true,
+  "dependencies": {
+    "axios": "1.0.0",
+    "next": "16.0.0",
+    "react": "19.0.0"
+  }
+}

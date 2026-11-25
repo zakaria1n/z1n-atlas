@@ -59,6 +59,10 @@ export function graphIsValid(graph: CodeGraph, files: Input[]): boolean {
       .includes(item.snippet.replace(/\r\n|\r/g, "\n"));
   };
   return (
+    (graph.unresolvedItems === undefined ||
+      (new Set(graph.unresolvedItems.map((item) => item.id)).size ===
+        graph.unresolvedItems.length &&
+        graph.unresolvedItems.every((item) => validEvidence(item)))) &&
     graph.edges.every((edge) => {
       const item = evidence.get(edge.evidenceId);
       if (
@@ -77,6 +81,7 @@ export function graphIsValid(graph: CodeGraph, files: Input[]): boolean {
           return Boolean(supporting && validEvidence(supporting));
         })
       );
-    }) && graph.evidence.every((item) => linkedEvidence.has(item.id))
+    }) &&
+    graph.evidence.every((item) => linkedEvidence.has(item.id))
   );
 }

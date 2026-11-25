@@ -4,14 +4,15 @@ import { addPrismaAccess } from "./prisma-access";
 import { addHttpRelationships } from "./http-relationships";
 import { addSymbolsAndCalls } from "./symbols-and-calls";
 import { compilerOptions } from "./compiler-options";
-import { addReactEvents } from "./react-events";
+import { addReactRelationships } from "./react-relationships";
 import { createManifestLookup, type ManifestLookup } from "./next-manifest";
 import { createModuleResolver } from "./module-resolution";
 import type { CodeGraph } from "@z1n/contracts";
-import type {
-  AnalysisContext,
-  GraphParts,
-  SymbolContext,
+import {
+  addUnresolved,
+  type AnalysisContext,
+  type GraphParts,
+  type SymbolContext,
 } from "./framework-graph";
 import {
   candidateNames,
@@ -25,6 +26,7 @@ import {
 export type AnalyzerFile = { path: string; content: string };
 const script = /\.[cm]?[jt]sx?$/i;
 const identifierName = /^[A-Za-z_$][\w$]*$/;
+const relativeImport = /^\.{1,2}\//;
 
 function exportedNames(source: SourceFile): string[] {
   const localExports = localExportNames(source);
@@ -66,14 +68,16 @@ function collectSources(
     const source = project.getSourceFileOrThrow(`/workspace/${file.path}`);
     return project.forgetNodesCreatedInBlock((remember) => {
       const nodes = collectSourceNodes(source, names);
-      for (const group of [
-        nodes.identifiers,
-        nodes.calls,
-        nodes.callVariables,
-        nodes.declarations,
-        nodes.jsxAttributes,
+      for (const node of [
+        ...nodes.identifiers,
+        ...nodes.calls,
+        ...nodes.callVariables,
+        ...nodes.declarations,
+        ...nodes.jsxAttributes,
+        ...nodes.jsxElements,
+        ...nodes.anonymous.map((item) => item.node),
       ])
-        for (const node of group) remember(node);
+        remember(node);
       return nodes;
     });
   });
@@ -103,8 +107,30 @@ export function analyzeFiles(
   const sources = collectSources(project, scripts, names);
   const resolveModule = createModuleResolver(files, options);
   const paths = new Set(scripts.map((file) => file.path));
-  const graph: GraphParts = { nodes: [], edges: [], evidence: [] };
+  const known = new Set(files.map((file) => file.path));
+  const graph: GraphParts = {
+    nodes: [],
+    edges: [],
+    evidence: [],
+    unresolvedItems: [],
+  };
   const manifests: ManifestLookup = createManifestLookup(files);
+  // React conventions are only read where the file proves it is React code.
+  const reactFiles = new Set(
+    sources
+      .filter(
+        ({ path, source }) =>
+          /\.[jt]sx$/i.test(path) &&
+          (source
+            .getImportDeclarations()
+            .some(
+              (declaration) =>
+                declaration.getModuleSpecifierValue() === "react",
+            ) ||
+            manifests.react(path) !== null),
+      )
+      .map(({ path }) => path),
+  );
   const context: AnalysisContext = {
     files,
     sources,
@@ -112,6 +138,7 @@ export function analyzeFiles(
     graph,
     names,
     manifests,
+    reactFiles,
   };
   for (const { path, source } of sources)
     graph.nodes.push({ id: path, path, exports: exportedNames(source) });
@@ -121,25 +148,33 @@ export function analyzeFiles(
     const relations = [
       ...source.getImportDeclarations().map((node) => ({
         node,
-        target: resolveModule(node.getModuleSpecifierValue(), path),
+        specifier: node.getModuleSpecifierValue(),
         kind: "imports" as const,
       })),
       ...source.getExportDeclarations().flatMap((node) => {
         const specifier = node.getModuleSpecifierValue();
         return specifier
-          ? [
-              {
-                node,
-                target: resolveModule(specifier, path),
-                kind: "re-exports" as const,
-              },
-            ]
+          ? [{ node, specifier, kind: "re-exports" as const }]
           : [];
       }),
-    ];
+    ].map((relation) => ({
+      ...relation,
+      target: resolveModule(relation.specifier, path),
+    }));
     for (const relation of relations) {
       if (!relation.target || !paths.has(relation.target)) {
         unresolved++;
+        // Packages are expected to be outside the analysis; a relative
+        // import that leads nowhere is a gap worth showing.
+        if (relativeImport.test(relation.specifier))
+          addUnresolved(
+            relation.node,
+            context,
+            "import",
+            known.has(relation.target ?? "")
+              ? "This file is indexed but was not selected for analysis."
+              : "This import does not resolve to a file in the index.",
+          );
         continue;
       }
       const target = relation.target;
@@ -167,10 +202,14 @@ export function analyzeFiles(
     ).length;
   }
   progress?.("symbols");
-  const { symbols, unresolvedCalls } = addSymbolsAndCalls(context);
-  const symbolContext: SymbolContext = { ...context, symbols };
+  const { symbols, unresolvedCalls, callTargets } = addSymbolsAndCalls(context);
+  const symbolContext: SymbolContext = {
+    ...context,
+    symbols,
+    callTargets,
+  };
   progress?.("frameworks");
-  addReactEvents(symbolContext);
+  addReactRelationships(symbolContext);
   unresolved += addNextEntrypoints(symbolContext);
   addPrismaAccess(symbolContext);
   unresolved += addHttpRelationships(symbolContext);
@@ -180,6 +219,9 @@ export function analyzeFiles(
     evidence: graph.evidence,
     unresolved,
     unresolvedCalls,
-    notice: `Static imports, references, resolved calls, recognized React event attributes, Next.js page entries, selected Express and Next.js routes, literal fetch requests and recognized Prisma access are included. HTTP matches are heuristic; static relationships are not runtime traces. Dynamic routes, dynamic URLs and dispatch may be unresolved. ${configNotice}`,
+    unresolvedItems: graph.unresolvedItems.length
+      ? graph.unresolvedItems
+      : undefined,
+    notice: `Static imports, references, resolved calls, recognized React event attributes and rendered components, Next.js page entries, selected Express, Fastify and Next.js routes including inline handlers, literal fetch requests, requests through functions that forward their arguments to fetch, axios requests and recognized Prisma access are included. Requests, routes and handlers that could not be resolved are listed. HTTP matches are heuristic; static relationships are not runtime traces. ${configNotice}`,
   };
 }

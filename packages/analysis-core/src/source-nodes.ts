@@ -1,13 +1,30 @@
 import {
+  Node,
   SyntaxKind,
   ts,
   type CallExpression,
   type Identifier,
   type JsxAttribute,
-  type Node,
+  type JsxOpeningElement,
+  type JsxSelfClosingElement,
+  type Node as MorphNode,
   type SourceFile,
   type VariableDeclaration,
 } from "ts-morph";
+import { constantString } from "./symbols-and-calls";
+import { workspacePath } from "./workspace";
+
+export type SymbolNames = {
+  /** Names of declarations that become symbol nodes. */
+  declared: Set<string>;
+  /** Declared names plus every identifier inside import and export statements, because an alias may differ from the name it refers to. */
+  any: Set<string>;
+};
+
+export type AnonymousFunction = {
+  node: MorphNode;
+  name: string;
+};
 
 /**
  * Nodes of one source file that the analysis passes use, gathered in a single
@@ -21,10 +38,27 @@ export type SourceNodes = {
   calls: CallExpression[];
   /** Variables initialized by a call, such as `const app = express()`. */
   callVariables: VariableDeclaration[];
-  /** Functions, methods, classes, then function-valued variables and properties. */
-  declarations: Node[];
+  /**
+   * Functions, methods, classes, function-valued variables, class properties
+   * and object members, in that order.
+   */
+  declarations: MorphNode[];
   jsxAttributes: JsxAttribute[];
+  /** JSX elements, which may render another component. */
+  jsxElements: (JsxOpeningElement | JsxSelfClosingElement)[];
+  /** Nameless functions that receive a node because a route or page refers to them. */
+  anonymous: AnonymousFunction[];
 };
+
+/** Route methods of Express and Fastify routers, in lowercase as written in code. */
+export const httpVerbs = new Set([
+  "get",
+  "post",
+  "put",
+  "patch",
+  "delete",
+  "all",
+]);
 
 function nameText(name: ts.Node, source: ts.SourceFile): string {
   return ts.isIdentifier(name) || ts.isPrivateIdentifier(name)
@@ -42,7 +76,14 @@ function trackedName(node: ts.Node, source: ts.SourceFile): string | undefined {
     return node.name && node.body ? nameText(node.name, source) : undefined;
   if (ts.isClassDeclaration(node))
     return node.name ? nameText(node.name, source) : undefined;
-  if (ts.isVariableDeclaration(node) || ts.isPropertyDeclaration(node)) {
+  // A function assigned to a named member, such as `create: async (x) => {}`
+  // in an object literal or `create = () => {}` on a class, is the usual shape
+  // of a service or an API client and is tracked like a method.
+  if (
+    ts.isVariableDeclaration(node) ||
+    ts.isPropertyDeclaration(node) ||
+    ts.isPropertyAssignment(node)
+  ) {
     const { initializer } = node;
     return initializer &&
       ts.isIdentifier(node.name) &&
@@ -53,12 +94,28 @@ function trackedName(node: ts.Node, source: ts.SourceFile): string | undefined {
   return undefined;
 }
 
-export type SymbolNames = {
-  /** Names of declarations that become symbol nodes. */
-  declared: Set<string>;
-  /** Declared names plus every identifier inside import and export statements, because an alias may differ from the name it refers to. */
-  any: Set<string>;
-};
+/**
+ * A nameless function matters to a journey only when framework code calls
+ * it, so it is named after what refers to it: the default export of a module
+ * or the route it handles.
+ */
+function anonymousName(node: MorphNode): string | undefined {
+  const parent = node.getParent();
+  if (Node.isExportAssignment(parent)) return "default export";
+  if (!Node.isCallExpression(parent)) return undefined;
+  const args = parent.getArguments();
+  if (args.indexOf(node) < 1) return undefined;
+  const expression = parent.getExpression();
+  if (
+    !Node.isPropertyAccessExpression(expression) ||
+    !httpVerbs.has(expression.getName().toLowerCase())
+  )
+    return undefined;
+  const route = constantString(args[0]);
+  return route?.startsWith("/")
+    ? `${expression.getName().toLowerCase()} ${route} callback`
+    : undefined;
+}
 
 /**
  * Names that can resolve to a tracked declaration. A plain identifier reaches
@@ -96,19 +153,22 @@ export function collectSourceNodes(
   names: SymbolNames,
 ): SourceNodes {
   const raw = source.compilerNode;
-  const functions: Node[] = [];
-  const methods: Node[] = [];
-  const classes: Node[] = [];
+  const functions: MorphNode[] = [];
+  const methods: MorphNode[] = [];
+  const classes: MorphNode[] = [];
   const variables: VariableDeclaration[] = [];
-  const properties: Node[] = [];
+  const properties: MorphNode[] = [];
+  const assignments: MorphNode[] = [];
   const nodes: SourceNodes = {
-    path: source.getFilePath().replace(/^\/workspace\//, ""),
+    path: workspacePath(source.getFilePath()),
     source,
     identifiers: [],
     calls: [],
     callVariables: [],
     declarations: [],
     jsxAttributes: [],
+    jsxElements: [],
+    anonymous: [],
   };
   source.forEachDescendant((node) => {
     switch (node.getKind()) {
@@ -127,10 +187,30 @@ export function collectSourceNodes(
       case SyntaxKind.JsxAttribute:
         nodes.jsxAttributes.push(node as JsxAttribute);
         break;
-      case SyntaxKind.FunctionDeclaration:
-        if (trackedName(node.compilerNode, raw) !== undefined)
-          functions.push(node);
+      case SyntaxKind.JsxOpeningElement:
+      case SyntaxKind.JsxSelfClosingElement:
+        nodes.jsxElements.push(
+          node as JsxOpeningElement | JsxSelfClosingElement,
+        );
         break;
+      case SyntaxKind.ArrowFunction:
+      case SyntaxKind.FunctionExpression: {
+        const name = anonymousName(node);
+        if (name) nodes.anonymous.push({ node, name });
+        break;
+      }
+      case SyntaxKind.FunctionDeclaration: {
+        const declaration = node.compilerNode;
+        if (trackedName(declaration, raw) !== undefined) functions.push(node);
+        else if (
+          ts.isFunctionDeclaration(declaration) &&
+          !declaration.name &&
+          declaration.body &&
+          hasModifier(declaration, SyntaxKind.DefaultKeyword)
+        )
+          nodes.anonymous.push({ node, name: "default export" });
+        break;
+      }
       case SyntaxKind.MethodDeclaration:
         if (trackedName(node.compilerNode, raw) !== undefined)
           methods.push(node);
@@ -142,6 +222,10 @@ export function collectSourceNodes(
       case SyntaxKind.PropertyDeclaration:
         if (trackedName(node.compilerNode, raw) !== undefined)
           properties.push(node);
+        break;
+      case SyntaxKind.PropertyAssignment:
+        if (trackedName(node.compilerNode, raw) !== undefined)
+          assignments.push(node);
         break;
       case SyntaxKind.VariableDeclaration:
         if (!ts.isVariableDeclaration(node.compilerNode)) break;
@@ -161,6 +245,7 @@ export function collectSourceNodes(
     ...classes,
     ...variables,
     ...properties,
+    ...assignments,
   ];
   return nodes;
 }

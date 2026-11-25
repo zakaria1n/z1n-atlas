@@ -1,14 +1,25 @@
-import type { Node, SourceFile } from "ts-morph";
-import type { GraphEdge, GraphEvidence, GraphNode } from "@z1n/contracts";
+import type { CallExpression, Node, SourceFile } from "ts-morph";
+import type {
+  GraphEdge,
+  GraphEvidence,
+  GraphNode,
+  GraphUnresolved,
+} from "@z1n/contracts";
 import type { AnalyzerFile } from "./analyze-files";
 import type { ManifestLookup } from "./next-manifest";
 import type { SourceNodes, SymbolNames } from "./source-nodes";
 import type { SymbolIndex } from "./symbols-and-calls";
+import { workspacePath } from "./workspace";
+
+// The list is a bounded sample: the totals stay in the graph counters, and a
+// very large selection must not ship thousands of entries to the browser.
+const MAX_UNRESOLVED_ITEMS = 300;
 
 export type GraphParts = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   evidence: GraphEvidence[];
+  unresolvedItems: GraphUnresolved[];
 };
 export type HttpRoute = {
   nodeId: string;
@@ -29,15 +40,21 @@ export type AnalysisContext = {
   graph: GraphParts;
   names: SymbolNames;
   manifests: ManifestLookup;
+  /** JSX files whose React conventions are backed by an import or a package manifest. */
+  reactFiles: Set<string>;
 };
-export type SymbolContext = AnalysisContext & { symbols: SymbolIndex };
+export type SymbolContext = AnalysisContext & {
+  symbols: SymbolIndex;
+  /** Target of each call that resolved to a tracked declaration, keyed by the call. */
+  callTargets: Map<CallExpression, string>;
+};
 
 const relativePaths = new WeakMap<SourceFile, string>();
 export function relative(node: Node): string {
   const source = node.getSourceFile();
   let path = relativePaths.get(source);
   if (path === undefined) {
-    path = source.getFilePath().replace(/^\/workspace\//, "");
+    path = workspacePath(source.getFilePath());
     relativePaths.set(source, path);
   }
   return path;
@@ -72,6 +89,31 @@ export function evidence(node: Node, graph: GraphParts): string {
     },
     graph,
   );
+}
+/** Records a relationship that could not be established, at the code that would establish it. */
+export function addUnresolved(
+  node: Node,
+  context: AnalysisContext,
+  kind: GraphUnresolved["kind"],
+  reason: string,
+): void {
+  const items = context.graph.unresolvedItems;
+  const filePath = relative(node);
+  const id = `${filePath}:${node.getStart()}:${kind}`;
+  if (
+    items.length >= MAX_UNRESOLVED_ITEMS ||
+    items.some((item) => item.id === id)
+  )
+    return;
+  items.push({
+    id,
+    filePath,
+    startLine: node.getStartLineNumber(),
+    endLine: node.getEndLineNumber(),
+    snippet: node.getText().slice(0, 400),
+    kind,
+    reason,
+  });
 }
 export function addNode(
   node: Node,
