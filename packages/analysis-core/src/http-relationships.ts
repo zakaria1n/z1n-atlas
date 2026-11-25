@@ -15,6 +15,7 @@ import {
   type HttpRoute as Route,
   type SymbolContext as Context,
 } from "./framework-graph";
+import type { HttpRequestFact, HttpRouteFact } from "./http-match";
 import { addNextRoutes } from "./next-routes";
 import {
   constantString,
@@ -43,7 +44,7 @@ type Forwarder = {
   name: Node;
   fetchCall: CallExpression;
   urlIndex: number;
-  method: { value: string } | { argumentIndex: number };
+  method: { value: string } | { argumentIndex: number; defaultValue?: string };
 };
 const clientVerbs = new Set([
   "get",
@@ -138,6 +139,73 @@ function validPath(value: string): boolean {
     !/[?#:*(){}]/.test(value)
   );
 }
+/** A request path whose interpolations have become {param} segments. */
+function validParameterizedPath(value: string): boolean {
+  return (
+    value.startsWith("/") &&
+    !value.startsWith("//") &&
+    !/[?#*()]/.test(value) &&
+    value
+      .split("/")
+      .every(
+        (segment) =>
+          segment === "" || /^[\w.\-]*(\{param\})?[\w.\-]*$/.test(segment),
+      )
+  );
+}
+/** The addressed resource of a request, without its query string. */
+function stripQuery(value: string): string {
+  const query = value.indexOf("?");
+  const path = query === -1 ? value : value.slice(0, query);
+  return path.length ? path : "/";
+}
+/**
+ * Reads a request address as a literal or a parameterized pattern. Template
+ * interpolations become {param}; constants that hold template literals are
+ * folded, so a shared base address keeps its literal segments.
+ */
+function requestUrl(node: Node | undefined): string | null {
+  const constant = constantString(node);
+  if (constant !== null) return stripQuery(constant);
+  const pattern = parameterPattern(node);
+  return pattern !== null && validParameterizedPath(pattern)
+    ? stripQuery(pattern)
+    : null;
+}
+function parameterPattern(node: Node | undefined, depth = 6): string | null {
+  if (!node || depth < 0) return null;
+  if (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node))
+    return node.getLiteralText();
+  if (Node.isTemplateExpression(node)) {
+    let pattern = node.getHead().getLiteralText();
+    for (const span of node.getTemplateSpans()) {
+      const value = parameterPattern(span.getExpression(), depth - 1);
+      pattern += value ?? "{param}";
+      pattern += span.getLiteral().getLiteralText();
+    }
+    return pattern;
+  }
+  if (
+    Node.isBinaryExpression(node) &&
+    node.getOperatorToken().getText() === "+"
+  ) {
+    const left = parameterPattern(node.getLeft(), depth - 1);
+    const right = parameterPattern(node.getRight(), depth - 1);
+    return left !== null && right !== null ? left + right : null;
+  }
+  if (Node.isIdentifier(node)) {
+    const declaration = unalias(node.getSymbol())
+      ?.getDeclarations()
+      .find(Node.isVariableDeclaration);
+    if (
+      declaration &&
+      declaration.getVariableStatement()?.getDeclarationKind() ===
+        VariableDeclarationKind.Const
+    )
+      return parameterPattern(declaration.getInitializer(), depth - 1);
+  }
+  return null;
+}
 function propertyCall(
   call: CallExpression,
 ): { owner: Node; method: string } | null {
@@ -172,6 +240,58 @@ function forwardedParameter(
     signature.getEnd() <= owner.getEnd()
     ? parameter
     : null;
+}
+/**
+ * The wrapper parameter whose value is passed as a request method. The fetch
+ * options may forward the whole options parameter, or pick one binding out of
+ * a destructured parameter — `fetch(path, { method })` inside a function
+ * whose signature reads `{ method = "GET" }` — and that default then applies
+ * to callers that state no method of their own.
+ */
+function forwardedMethod(
+  owner: Node | undefined,
+  options: Node | undefined,
+): { index: number; defaultValue?: string } | null {
+  if (!owner || !options || !Node.isObjectLiteralExpression(options))
+    return null;
+  const property = options.getProperty("method");
+  let wanted: string | null = null;
+  if (property && Node.isShorthandPropertyAssignment(property))
+    wanted = property.getNameNode().getText();
+  else if (property && Node.isPropertyAssignment(property)) {
+    const initializer = property.getInitializer();
+    if (Node.isIdentifier(initializer)) wanted = initializer.getText();
+  }
+  if (!wanted) return null;
+  const parameters = functionParameters(owner);
+  for (let index = 0; index < parameters.length; index++) {
+    const nameNode = parameters[index].getNameNode();
+    if (Node.isIdentifier(nameNode)) {
+      if (nameNode.getText() === wanted) return { index };
+    } else if (Node.isObjectBindingPattern(nameNode))
+      for (const element of nameNode.getElements()) {
+        const local = element.getPropertyNameNode() ?? element.getNameNode();
+        if (local.getText() !== wanted) continue;
+        const initializer = element.getInitializer();
+        return {
+          index,
+          defaultValue:
+            initializer && Node.isStringLiteral(initializer)
+              ? initializer.getLiteralText().toUpperCase()
+              : undefined,
+        };
+      }
+  }
+  return null;
+}
+/** The parameters of a tracked function declaration. */
+function functionParameters(owner: Node) {
+  return Node.isFunctionDeclaration(owner) ||
+    Node.isArrowFunction(owner) ||
+    Node.isFunctionExpression(owner) ||
+    Node.isMethodDeclaration(owner)
+    ? owner.getParameters()
+    : [];
 }
 /**
  * The position of a parameter in its function. The parameter list of the
@@ -241,7 +361,11 @@ function axiosProof(node: Node): Node | undefined {
   return imp && imp.getModuleSpecifierValue() === "axios" ? imp : undefined;
 }
 
-export function addHttpRelationships(context: Context): number {
+export function addHttpRelationships(context: Context): {
+  unresolved: number;
+  routes: HttpRouteFact[];
+  requests: HttpRequestFact[];
+} {
   const { graph } = context;
   const owners = new Map<string, "app" | "router">();
   const calls: CallExpression[] = [];
@@ -455,15 +579,24 @@ export function addHttpRelationships(context: Context): number {
     const name = nameNode(ownerNode);
     const url = forwardedParameter(args[0], ownerNode);
     if (!name || !url) continue;
-    // The method is fixed when the wrapper states it, and otherwise comes
-    // from the options each caller passes.
+    // The method is fixed when the wrapper states it, comes from the options
+    // each caller passes, or falls back to a destructured default.
     const stated = methodFromOptions(args[1]);
-    const options =
-      stated === undefined ? forwardedParameter(args[1], ownerNode) : null;
     let method: Forwarder["method"];
     if (stated !== undefined) method = { value: stated };
-    else if (options) method = { argumentIndex: parameterIndex(options) };
-    else continue;
+    else {
+      const options = forwardedParameter(args[1], ownerNode);
+      if (options !== null) method = { argumentIndex: parameterIndex(options) };
+      else {
+        const binding = forwardedMethod(ownerNode, args[1]);
+        if (binding)
+          method = {
+            argumentIndex: binding.index,
+            defaultValue: binding.defaultValue,
+          };
+        else continue;
+      }
+    }
     forwarders.set(owner, {
       name,
       fetchCall: call,
@@ -478,8 +611,8 @@ export function addHttpRelationships(context: Context): number {
     if (!forwarder) continue;
     const args = call.getArguments();
     const name = forwarder.name.getText();
-    const url = constantString(args[forwarder.urlIndex]);
-    if (!url || !validPath(url)) {
+    const url = requestUrl(args[forwarder.urlIndex]);
+    if (!url || !validParameterizedPath(url)) {
       unresolved++;
       addUnresolved(
         args[forwarder.urlIndex] ?? call,
@@ -496,7 +629,13 @@ export function addHttpRelationships(context: Context): number {
     const method =
       "value" in forwarder.method
         ? forwarder.method.value
-        : methodFromOptions(forwardedOptions);
+        : (methodFromOptions(forwardedOptions) ??
+          (
+            forwarder.method as {
+              argumentIndex: number;
+              defaultValue?: string;
+            }
+          ).defaultValue);
     if (!method) {
       unresolved++;
       addUnresolved(
@@ -521,8 +660,8 @@ export function addHttpRelationships(context: Context): number {
   for (const { call, args } of fetches) {
     // A forwarded address is reported at the call sites of its wrapper.
     if (forwarded.has(call)) continue;
-    const url = constantString(args[0]);
-    if (!url || !validPath(url)) {
+    const url = requestUrl(args[0]);
+    if (!url || !validParameterizedPath(url)) {
       unresolved++;
       addUnresolved(
         args[0] ?? call,
@@ -594,10 +733,10 @@ export function addHttpRelationships(context: Context): number {
         method = methodFromOptions(config);
       }
     } else {
-      url = constantString(args[0]);
+      url = requestUrl(args[0]);
       method = pc.method.toUpperCase();
     }
-    if (!url || !validPath(url)) {
+    if (!url || !validParameterizedPath(url)) {
       unresolved++;
       addUnresolved(
         args[0] ?? call,
@@ -626,6 +765,7 @@ export function addHttpRelationships(context: Context): number {
       supportingEvidenceIds: [evidence(proof, graph)],
     });
   }
+  const facts: HttpRequestFact[] = [];
   for (const {
     call,
     url,
@@ -646,38 +786,31 @@ export function addHttpRelationships(context: Context): number {
       evidenceId,
       supportingEvidenceIds,
     });
-    const matched = routes.filter(
-      (route) =>
-        route.path === url &&
-        (route.method === method ||
-          route.method === "ALL" ||
-          route.method === "ANY"),
-    );
-    if (matched.length !== 1) {
-      unresolved++;
-      addUnresolved(
-        call,
-        context,
-        "request",
-        matched.length
-          ? `More than one analyzed route matches ${method} ${url}.`
-          : `No analyzed route matches ${method} ${url}.`,
-      );
-      continue;
-    }
-    const route = matched[0];
-    graph.edges.push({
-      id: `${id}:route:${route.nodeId}`,
-      source: id,
-      target: route.nodeId,
-      kind: "http-route",
-      confidence: "heuristic",
+    facts.push({
+      nodeId: id,
+      url,
+      method,
       evidenceId,
-      supportingEvidenceIds: [
-        route.evidenceId,
-        ...(route.supportingEvidenceIds ?? []),
-      ],
+      location: {
+        filePath,
+        start: call.getStart(),
+        startLine: call.getStartLineNumber(),
+        endLine: call.getEndLineNumber(),
+        snippet: call.getText(),
+      },
     });
   }
-  return unresolved;
+  return {
+    unresolved,
+    routes: routes.map(
+      ({ nodeId, path, method, evidenceId, supportingEvidenceIds }) => ({
+        nodeId,
+        path,
+        method,
+        evidenceId,
+        supportingEvidenceIds,
+      }),
+    ),
+    requests: facts,
+  };
 }

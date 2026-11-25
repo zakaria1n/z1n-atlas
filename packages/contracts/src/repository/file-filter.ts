@@ -1,6 +1,9 @@
-const allowedExtension = /\.(?:[cm]?[jt]sx?|json|css|html|md)$/i;
+const allowedExtension = /\.(?:[cm]?[jt]sx?|py|json|css|html|md)$/i;
+// Build-output directories are not excluded: several real projects develop
+// directly in them, the tiered selection already ranks tests and generated
+// code last, and the byte budget bounds what a large checkout can cost.
 const excludedDirectory =
-  /^(?:node_modules|\.git|\.next|dist|build|out|coverage|vendor|\.turbo)$/i;
+  /^(?:node_modules|\.git|\.next|coverage|vendor|\.turbo)$/i;
 const excludedName =
   /(?:^\.|(?:^|[._-])(?:secret|secrets|credential|credentials|private|token|password|key)(?:[._-]|$)|(?:^|[._-])lock\.)/i;
 

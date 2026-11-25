@@ -3,7 +3,7 @@ import { analyzeFiles } from "./analyze-files";
 import { graphIsValid } from "@z1n/contracts";
 
 describe("semantic symbols and calls", () => {
-  it("links aliases, re-exports, functions, classes and methods to real declarations", () => {
+  it("links aliases, re-exports, functions, classes and methods to real declarations", async () => {
     const files = [
       {
         path: "tsconfig.json",
@@ -29,7 +29,7 @@ describe("semantic symbols and calls", () => {
         content: "export class Service { create() { return 1; } }",
       },
     ];
-    const graph = analyzeFiles(files);
+    const graph = await analyzeFiles(files);
     expect(graphIsValid(graph, files)).toBe(true);
     const calls = graph.edges
       .filter((edge) => edge.kind === "calls")
@@ -56,8 +56,8 @@ describe("semantic symbols and calls", () => {
       ),
     ).toBe(true);
   });
-  it("does not invent a call target for an unresolved function", () => {
-    const graph = analyzeFiles([
+  it("does not invent a call target for an unresolved function", async () => {
+    const graph = await analyzeFiles([
       { path: "src/a.ts", content: "export function run() { unknown(); }" },
     ]);
     expect(graph.edges.filter((edge) => edge.kind === "calls")).toEqual([]);

@@ -48,13 +48,13 @@ export function start() {
 `,
   },
 ];
-const edgesBetween = (
+const edgesBetween = async (
   kind: string,
   from: string,
   to: string,
   content = files,
 ) => {
-  const graph = analyzeFiles(content);
+  const graph = await analyzeFiles(content);
   expect(graphIsValid(graph, content)).toBe(true);
   return graph.edges.filter((edge) => {
     const node = (id: string) => graph.nodes.find((item) => item.id === id);
@@ -67,17 +67,21 @@ const edgesBetween = (
 };
 
 describe("symbol resolution through aliases and members", () => {
-  it("links references and calls that reach a declaration through an import or re-export alias", () => {
-    expect(edgesBetween("calls", "start", "createItem")).toHaveLength(1);
-    expect(edgesBetween("references", "start", "removeItem")).toHaveLength(1);
-    expect(edgesBetween("references", "start", "Thing")).toHaveLength(1);
+  it("links references and calls that reach a declaration through an import or re-export alias", async () => {
+    expect(await edgesBetween("calls", "start", "createItem")).toHaveLength(1);
+    expect(
+      await edgesBetween("references", "start", "removeItem"),
+    ).toHaveLength(1);
+    expect(await edgesBetween("references", "start", "Thing")).toHaveLength(1);
   }, 30_000);
-  it("resolves members reached through a namespace import, this and a private name", () => {
-    expect(edgesBetween("references", "start", "createItem")).toHaveLength(1);
-    expect(edgesBetween("calls", "run", "submit")).toHaveLength(1);
-    expect(edgesBetween("calls", "run", "#reset")).toHaveLength(1);
+  it("resolves members reached through a namespace import, this and a private name", async () => {
+    expect(
+      await edgesBetween("references", "start", "createItem"),
+    ).toHaveLength(1);
+    expect(await edgesBetween("calls", "run", "submit")).toHaveLength(1);
+    expect(await edgesBetween("calls", "run", "#reset")).toHaveLength(1);
   }, 30_000);
-  it("does not link object properties that merely share an imported name", () => {
+  it("does not link object properties that merely share an imported name", async () => {
     const content = files.map((file) =>
       file.path === "use.ts"
         ? {
@@ -90,13 +94,13 @@ describe("symbol resolution through aliases and members", () => {
         : file,
     );
     expect(
-      edgesBetween("references", "start", "createItem", content),
+      await edgesBetween("references", "start", "createItem", content),
     ).toHaveLength(0);
     expect(
-      edgesBetween("references", "start", "removeItem", content),
+      await edgesBetween("references", "start", "removeItem", content),
     ).toHaveLength(0);
   }, 30_000);
-  it("does not derive relationships from comments", () => {
+  it("does not derive relationships from comments", async () => {
     // Only the call site mentions createItem as code; the comment adds none.
     const content = files.map((file) =>
       file.path === "use.ts"
@@ -104,7 +108,7 @@ describe("symbol resolution through aliases and members", () => {
         : file,
     );
     expect(
-      edgesBetween("references", "start", "createItem", content),
+      await edgesBetween("references", "start", "createItem", content),
     ).toHaveLength(1);
     const withoutProperty = content.map((file) =>
       file.path === "use.ts"
@@ -115,11 +119,11 @@ describe("symbol resolution through aliases and members", () => {
         : file,
     );
     expect(
-      edgesBetween("references", "start", "createItem", withoutProperty),
+      await edgesBetween("references", "start", "createItem", withoutProperty),
     ).toHaveLength(0);
   }, 30_000);
-  it("keeps a method with a computed name as a node", () => {
-    const graph = analyzeFiles(files);
+  it("keeps a method with a computed name as a node", async () => {
+    const graph = await analyzeFiles(files);
     expect(graph.nodes.map((node) => node.name)).toContain("[Symbol.iterator]");
   }, 30_000);
 });

@@ -36,12 +36,17 @@ describe("repository filtering", () => {
     "node_modules/pkg/index.ts",
     "secrets/config.ts",
     "src/api-key.ts",
-    "dist/app.js",
     "src/image.png",
   ])("excludes %s", (path) => expect(isEligiblePath(path)).toBe(false));
-  it.each(["src/main.ts", "README.md", "src/app.tsx"])("allows %s", (path) =>
-    expect(isEligiblePath(path)).toBe(true),
-  );
+  it.each([
+    "src/main.ts",
+    "README.md",
+    "src/app.tsx",
+    // Some real projects develop directly inside their output directories,
+    // and Python sources are first-class analysis inputs.
+    "dist/app.js",
+    "backend/app/bookings.py",
+  ])("allows %s", (path) => expect(isEligiblePath(path)).toBe(true));
 });
 
 describe("GitHub importer", () => {

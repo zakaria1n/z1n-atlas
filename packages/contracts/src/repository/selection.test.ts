@@ -19,6 +19,12 @@ describe("selection tier", () => {
     ["src/generated/client.ts", 2],
     ["src/api.gen.ts", 2],
     ["src/types.d.ts", 2],
+    ["backend/app/bookings.py", 1],
+    ["services/notifications.py", 1],
+    ["tests/test_bookings.py", 2],
+    ["backend/app/test_users.py", 2],
+    ["backend/conftest.py", 2],
+    ["migrations/versions/0001_catalog.py", 2],
     ["README.md", 3],
     ["src/styles.css", 3],
   ])("ranks %s as tier %i", (path, tier) => {

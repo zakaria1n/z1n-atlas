@@ -41,8 +41,8 @@ const files = [
   },
 ];
 describe("React and nested Express evidence", () => {
-  it("links registered event handlers, mounted routes and class-property handlers to actual source", () => {
-    const graph = analyzeFiles(files);
+  it("links registered event handlers, mounted routes and class-property handlers to actual source", async () => {
+    const graph = await analyzeFiles(files);
     expect(graphIsValid(graph, files)).toBe(true);
     const node = (name: string, path?: string) =>
       graph.nodes.find(
@@ -83,7 +83,7 @@ describe("React and nested Express evidence", () => {
     );
     expect(next(repo.target, "database-access")).toBeDefined();
   });
-  it("does not invent an event link for an unresolved or dynamic handler", () => {
+  it("does not invent an event link for an unresolved or dynamic handler", async () => {
     const changed = files.map((file) =>
       file.path === "ui/App.tsx"
         ? {
@@ -92,18 +92,18 @@ describe("React and nested Express evidence", () => {
           }
         : file,
     );
-    const graph = analyzeFiles(changed);
+    const graph = await analyzeFiles(changed);
     expect(graphIsValid(graph, changed)).toBe(true);
     expect(graph.edges.filter((edge) => edge.kind === "handles-event")).toEqual(
       [],
     );
   });
-  it("recognizes automatic JSX only with a supported project manifest", () => {
+  it("recognizes automatic JSX only with a supported project manifest", async () => {
     const source = {
       path: "ui/App.tsx",
       content: `export function App(){ const handle = () => 1; return <button onClick={handle}/>; }`,
     };
-    const absent = analyzeFiles([source]);
+    const absent = await analyzeFiles([source]);
     expect(
       absent.edges.filter((edge) => edge.kind === "handles-event"),
     ).toHaveLength(0);
@@ -111,7 +111,7 @@ describe("React and nested Express evidence", () => {
       source,
       { path: "ui/package.json", content: '{"dependencies":{"react":"18"}}' },
     ];
-    const graph = analyzeFiles(withManifest);
+    const graph = await analyzeFiles(withManifest);
     const edge = graph.edges.find((item) => item.kind === "handles-event");
     expect(graphIsValid(graph, withManifest)).toBe(true);
     expect(
@@ -120,14 +120,14 @@ describe("React and nested Express evidence", () => {
       ),
     ).toEqual(["ui/package.json"]);
   });
-  it("terminates router cycles without inventing paths through the cycle", () => {
+  it("terminates router cycles without inventing paths through the cycle", async () => {
     const source = [
       {
         path: "server.ts",
         content: `import express, {Router} from 'express'; const app=express(); const a=Router(); const b=Router(); app.use('/api',a); a.use('/b',b); b.use('/again',a); b.get('/health', handler); function handler() { return 'ok'; }`,
       },
     ];
-    const graph = analyzeFiles(source);
+    const graph = await analyzeFiles(source);
     expect(graphIsValid(graph, source)).toBe(true);
     expect(
       graph.nodes

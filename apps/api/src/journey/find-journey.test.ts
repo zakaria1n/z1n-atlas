@@ -49,7 +49,7 @@ const files = [
   },
 ];
 describe("feature journey selection", () => {
-  it("prefers a matching registered handler over an unrelated handler for the same endpoint", () => {
+  it("prefers a matching registered handler over an unrelated handler for the same endpoint", async () => {
     const changed = files.map((file) =>
       file.path === "src/ui.tsx"
         ? {
@@ -58,7 +58,7 @@ describe("feature journey selection", () => {
           }
         : file,
     );
-    const graph = analyzeFiles(changed);
+    const graph = await analyzeFiles(changed);
     const journey = findJourney("user registration", graph);
     expect(journeyIsValid(journey, graph)).toBe(true);
     expect(
@@ -70,8 +70,8 @@ describe("feature journey selection", () => {
       graph.edges.find((edge) => edge.id === journey.edgeIds[0])?.kind,
     ).toBe("handles-event");
   });
-  it("uses evidence-selected files only as ranking hints for real graph paths", () => {
-    const graph = analyzeFiles(files);
+  it("uses evidence-selected files only as ranking hints for real graph paths", async () => {
+    const graph = await analyzeFiles(files);
     const journey = findJourney("payment", graph, ["src/ui.tsx"]);
     expect(journeyIsValid(journey, graph)).toBe(true);
     expect(journey.nodeIds.length).toBeGreaterThan(1);
@@ -82,8 +82,8 @@ describe("feature journey selection", () => {
       journey.edgeIds.every((id) => graph.edges.some((edge) => edge.id === id)),
     ).toBe(true);
   });
-  it("selects a real path from React through Express to Prisma with a heuristic warning", () => {
-    const graph = analyzeFiles(files);
+  it("selects a real path from React through Express to Prisma with a heuristic warning", async () => {
+    const graph = await analyzeFiles(files);
     const journey = findJourney("How does user registration work?", graph);
     expect(graphIsValid(graph, files)).toBe(true);
     expect(journeyIsValid(journey, graph)).toBe(true);
@@ -103,7 +103,7 @@ describe("feature journey selection", () => {
     ]);
     expect(journey.uncertainties.join()).toContain("heuristic");
   });
-  it("does not invent an unmatched route", () => {
+  it("does not invent an unmatched route", async () => {
     const changed = files.map((file) =>
       file.path === "src/client.ts"
         ? {
@@ -113,7 +113,7 @@ describe("feature journey selection", () => {
           }
         : file,
     );
-    const graph = analyzeFiles(changed);
+    const graph = await analyzeFiles(changed);
     const journey = findJourney("user registration", graph);
     expect(journeyIsValid(journey, graph)).toBe(true);
     expect(

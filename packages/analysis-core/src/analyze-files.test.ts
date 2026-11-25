@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { analyzeFiles } from "./analyze-files";
 
 describe("static source analysis", () => {
-  it("links only resolved imports and re-exports with exact source evidence", () => {
-    const result = analyzeFiles([
+  it("links only resolved imports and re-exports with exact source evidence", async () => {
+    const result = await analyzeFiles([
       {
         path: "src/index.ts",
         content:
@@ -39,8 +39,8 @@ describe("static source analysis", () => {
     ]);
     expect(result.unresolved).toBe(2);
   });
-  it("resolves root configuration aliases and re-exports across cycles", () => {
-    const graph = analyzeFiles([
+  it("resolves root configuration aliases and re-exports across cycles", async () => {
+    const graph = await analyzeFiles([
       {
         path: "tsconfig.json",
         content:
@@ -62,8 +62,8 @@ describe("static source analysis", () => {
     ]);
     expect(graph.unresolved).toBe(0);
   });
-  it("uses TypeScript module resolution without inventing route edges", () => {
-    const result = analyzeFiles([
+  it("uses TypeScript module resolution without inventing route edges", async () => {
+    const result = await analyzeFiles([
       {
         path: "src/a.ts",
         content: 'import { x } from "./b"; fetch("/api/login");',

@@ -27,7 +27,7 @@ function loadFixture(dir: string) {
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 const files = loadFixture(fixtureDir);
-const graph = analyzeFiles(files);
+const graph = await analyzeFiles(files);
 const idOf = (name: string, pathPart?: string) => {
   const node = graph.nodes.find(
     (item) => item.name === name && (!pathPart || item.path.includes(pathPart)),

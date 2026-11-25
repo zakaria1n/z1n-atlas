@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { analyzeFiles } from "./analyze-files";
 import { graphIsValid } from "@z1n/contracts";
 describe("graph invariants", () => {
-  it("accepts verified evidence and rejects missing or altered references", () => {
+  it("accepts verified evidence and rejects missing or altered references", async () => {
     const files = [
       { path: "a.ts", content: 'import "./b";' },
       { path: "b.ts", content: "export const b = 1;" },
     ];
-    const graph = analyzeFiles(files);
+    const graph = await analyzeFiles(files);
     expect(graphIsValid(graph, files)).toBe(true);
     expect(
       graphIsValid(

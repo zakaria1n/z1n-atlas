@@ -1,0 +1,8 @@
+{
+  "name": "fastapi-booking-fixture",
+  "private": true,
+  "dependencies": {
+    "fastapi": "0.115.0",
+    "sqlalchemy": "2.0.0"
+  }
+}

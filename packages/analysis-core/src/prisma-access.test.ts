@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { graphIsValid } from "@z1n/contracts";
 import { analyzeFiles } from "./analyze-files";
 describe("Prisma source evidence", () => {
-  it("links a recognized client operation through an imported instance", () => {
+  it("links a recognized client operation through an imported instance", async () => {
     const files = [
       {
         path: "src/db.ts",
@@ -15,7 +15,7 @@ describe("Prisma source evidence", () => {
           'import {db} from "./db"; export function insert(data: unknown){return db.user.create({data});}',
       },
     ];
-    const graph = analyzeFiles(files),
+    const graph = await analyzeFiles(files),
       edge = graph.edges.find((item) => item.kind === "database-access");
     expect(graphIsValid(graph, files)).toBe(true);
     expect(edge?.confidence).toBe("framework");
@@ -27,8 +27,8 @@ describe("Prisma source evidence", () => {
     );
     expect(edge?.supportingEvidenceIds).toHaveLength(2);
   });
-  it("does not infer database access from unrelated similarly named objects", () => {
-    const graph = analyzeFiles([
+  it("does not infer database access from unrelated similarly named objects", async () => {
+    const graph = await analyzeFiles([
       {
         path: "src/a.ts",
         content:

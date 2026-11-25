@@ -90,16 +90,24 @@ export function evidence(node: Node, graph: GraphParts): string {
     graph,
   );
 }
+/** A place in an analyzed file, described without a parser-specific node. */
+export type SourceLocation = {
+  filePath: string;
+  /** Start offset inside the file, so the identifier is stable across passes. */
+  start: number;
+  startLine: number;
+  endLine: number;
+  snippet: string;
+};
 /** Records a relationship that could not be established, at the code that would establish it. */
-export function addUnresolved(
-  node: Node,
-  context: AnalysisContext,
+export function addUnresolvedLocation(
+  graph: GraphParts,
+  location: SourceLocation,
   kind: GraphUnresolved["kind"],
   reason: string,
 ): void {
-  const items = context.graph.unresolvedItems;
-  const filePath = relative(node);
-  const id = `${filePath}:${node.getStart()}:${kind}`;
+  const items = graph.unresolvedItems;
+  const id = `${location.filePath}:${location.start}:${kind}`;
   if (
     items.length >= MAX_UNRESOLVED_ITEMS ||
     items.some((item) => item.id === id)
@@ -107,13 +115,33 @@ export function addUnresolved(
     return;
   items.push({
     id,
-    filePath,
-    startLine: node.getStartLineNumber(),
-    endLine: node.getEndLineNumber(),
-    snippet: node.getText().slice(0, 400),
+    filePath: location.filePath,
+    startLine: location.startLine,
+    endLine: location.endLine,
+    snippet: location.snippet.slice(0, 400),
     kind,
     reason,
   });
+}
+/** Records a relationship that could not be established, at the code that would establish it. */
+export function addUnresolved(
+  node: Node,
+  context: AnalysisContext,
+  kind: GraphUnresolved["kind"],
+  reason: string,
+): void {
+  addUnresolvedLocation(
+    context.graph,
+    {
+      filePath: relative(node),
+      start: node.getStart(),
+      startLine: node.getStartLineNumber(),
+      endLine: node.getEndLineNumber(),
+      snippet: node.getText(),
+    },
+    kind,
+    reason,
+  );
 }
 export function addNode(
   node: Node,

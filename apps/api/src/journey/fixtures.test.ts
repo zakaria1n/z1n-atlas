@@ -29,9 +29,9 @@ function load(name: string) {
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 describe("static exploration on representative fixtures", () => {
-  it("follows registration from the form to the database in the full-stack fixture", () => {
+  it("follows registration from the form to the database in the full-stack fixture", async () => {
     const files = load("react-express-auth");
-    const graph = analyzeFiles(files);
+    const graph = await analyzeFiles(files);
     expect(graphIsValid(graph, files)).toBe(true);
     const journey = findJourney("How does user registration work?", graph);
     expect(journeyIsValid(journey, graph)).toBe(true);
@@ -66,9 +66,9 @@ describe("static exploration on representative fixtures", () => {
     expect(journey.uncertainties.join(" ")).toContain("heuristic");
     expect(journey.mode).toBe("static");
   });
-  it("follows a session refresh through a request wrapper and an inline handler", () => {
+  it("follows a session refresh through a request wrapper and an inline handler", async () => {
     const files = load("react-express-auth");
-    const graph = analyzeFiles(files);
+    const graph = await analyzeFiles(files);
     const journey = findJourney("refresh session", graph);
     const names = journey.nodeIds.map(
       (id) => graph.nodes.find((node) => node.id === id)?.name,
@@ -83,9 +83,9 @@ describe("static exploration on representative fixtures", () => {
       "Prisma session.findUnique",
     ]);
   });
-  it("traces a Pages Router sign-in through axios to its API route", () => {
+  it("traces a Pages Router sign-in through axios to its API route", async () => {
     const files = load("next-pages-router");
-    const graph = analyzeFiles(files);
+    const graph = await analyzeFiles(files);
     expect(graphIsValid(graph, files)).toBe(true);
     // Static exploration answers by names: nothing in this fixture is named
     // "user", so the question names the sign-in itself.
@@ -102,9 +102,9 @@ describe("static exploration on representative fixtures", () => {
     expect(names[journey.nodeIds.length - 1]).toBe("loadSession");
     expect(journey.uncertainties.join(" ")).toContain("heuristic");
   });
-  it("stops at the client when no backend route matches and says so", () => {
+  it("stops at the client when no backend route matches and says so", async () => {
     const files = load("no-matching-route");
-    const graph = analyzeFiles(files);
+    const graph = await analyzeFiles(files);
     expect(graphIsValid(graph, files)).toBe(true);
     const journey = findJourney("retry payment", graph);
     expect(journey.nodeIds.length).toBeGreaterThan(1);
@@ -118,11 +118,35 @@ describe("static exploration on representative fixtures", () => {
       ),
     ).toBe(false);
   });
-  it("reports a question nothing answers instead of an unrelated path", () => {
+  it("reports a question nothing answers instead of an unrelated path", async () => {
     const files = load("react-express-auth");
-    const graph = analyzeFiles(files);
+    const graph = await analyzeFiles(files);
     const journey = findJourney("dashboard export", graph);
     expect(journey.nodeIds).toEqual([]);
     expect(journey.uncertainties[0]).toContain("No analyzed code matches");
+  });
+  it("follows a JavaScript booking through a FastAPI route into SQLAlchemy", async () => {
+    const files = load("fastapi-booking");
+    const graph = await analyzeFiles(files);
+    expect(graphIsValid(graph, files)).toBe(true);
+    const journey = findJourney("submit a booking", graph);
+    expect(journey.mode).toBe("static");
+    expect(journeyIsValid(journey, graph)).toBe(true);
+    expect(journey.nodeIds.length).toBeGreaterThan(1);
+    const nodes = journey.nodeIds.map((id) =>
+      graph.nodes.find((node) => node.id === id),
+    );
+    expect(nodes[0]?.name).toBe("submitBooking");
+    // The path crosses the language boundary and reaches the persistence side.
+    const kinds = journey.edgeIds.map(
+      (id) => graph.edges.find((edge) => edge.id === id)?.kind,
+    );
+    expect(kinds).toContain("requests");
+    expect(kinds).toContain("http-route");
+    expect(nodes.some((node) => node?.name === "POST /api/bookings")).toBe(
+      true,
+    );
+    expect(nodes.at(-1)?.path?.startsWith("backend/")).toBe(true);
+    expect(journey.uncertainties.join(" ")).toContain("heuristic");
   });
 });

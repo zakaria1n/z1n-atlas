@@ -7,6 +7,12 @@ import { compilerOptions } from "./compiler-options";
 import { addReactRelationships } from "./react-relationships";
 import { createManifestLookup, type ManifestLookup } from "./next-manifest";
 import { createModuleResolver } from "./module-resolution";
+import { analyzePython } from "./python/provider";
+import {
+  matchHttp,
+  type HttpRequestFact,
+  type HttpRouteFact,
+} from "./http-match";
 import type { CodeGraph } from "@z1n/contracts";
 import {
   addUnresolved,
@@ -25,6 +31,7 @@ import {
 
 export type AnalyzerFile = { path: string; content: string };
 const script = /\.[cm]?[jt]sx?$/i;
+const pythonSource = /\.py$/i;
 const identifierName = /^[A-Za-z_$][\w$]*$/;
 const relativeImport = /^\.{1,2}\//;
 
@@ -85,12 +92,69 @@ function collectSources(
 
 export type AnalysisStage =
   "parsing" | "imports" | "symbols" | "frameworks" | "validating";
-export function analyzeFiles(
+export async function analyzeFiles(
   files: AnalyzerFile[],
   progress?: (stage: AnalysisStage) => void,
-): CodeGraph {
+): Promise<CodeGraph> {
   progress?.("parsing");
   const scripts = files.filter((file) => script.test(file.path));
+  const javascript = analyzeJavaScript(scripts, files, progress);
+  // Python files are analyzed by the language provider when the selection
+  // contains any; a JavaScript-only selection never loads that parser.
+  const pythonSources = files.filter((file) => pythonSource.test(file.path));
+  const python = pythonSources.length
+    ? await analyzePython(pythonSources)
+    : {
+        parts: { nodes: [], edges: [], evidence: [], unresolvedItems: [] },
+        routes: [],
+        requests: [],
+        unresolved: 0,
+        unresolvedCalls: 0,
+      };
+  const graph: GraphParts = javascript.graph;
+  for (const key of [
+    "nodes",
+    "edges",
+    "evidence",
+    "unresolvedItems",
+  ] as const) {
+    for (const item of python.parts[key]) {
+      const list = graph[key] as { id: string }[];
+      if (!list.some((existing) => existing.id === item.id))
+        list.push(item as { id: string });
+    }
+  }
+  const unmatched = matchHttp(
+    [...javascript.requests, ...python.requests],
+    [...javascript.routes, ...python.routes],
+    graph,
+  );
+  return {
+    nodes: graph.nodes,
+    edges: graph.edges,
+    evidence: graph.evidence,
+    unresolved: javascript.unresolved + python.unresolved + unmatched,
+    unresolvedCalls: javascript.unresolvedCalls + python.unresolvedCalls,
+    unresolvedItems: graph.unresolvedItems.length
+      ? graph.unresolvedItems
+      : undefined,
+    notice: `Static imports, references, resolved calls, recognized React event attributes and rendered components, Next.js page entries, selected Express, Fastify and Next.js routes including inline handlers, literal fetch requests, requests through functions that forward their arguments to fetch, axios requests, Python modules, imports, calls and classes, FastAPI routes with composed router prefixes, SQLAlchemy models and session operations, literal requests/httpx calls, and recognized Prisma access are included. Client requests are matched against analyzed routes by path pattern and method, including across JavaScript and Python files; that matching is heuristic. Requests, routes and handlers that could not be resolved are listed. Static relationships are not runtime traces. ${javascript.configNotice}`,
+  };
+}
+
+/** The JavaScript and TypeScript half of the analysis, unchanged by the language dispatch. */
+function analyzeJavaScript(
+  scripts: AnalyzerFile[],
+  files: AnalyzerFile[],
+  progress?: (stage: AnalysisStage) => void,
+): {
+  graph: GraphParts;
+  routes: HttpRouteFact[];
+  requests: HttpRequestFact[];
+  unresolved: number;
+  unresolvedCalls: number;
+  configNotice: string;
+} {
   const { options, configNotice } = compilerOptions(files);
   const project = new Project({
     useInMemoryFileSystem: true,
@@ -212,16 +276,14 @@ export function analyzeFiles(
   addReactRelationships(symbolContext);
   unresolved += addNextEntrypoints(symbolContext);
   addPrismaAccess(symbolContext);
-  unresolved += addHttpRelationships(symbolContext);
+  const http = addHttpRelationships(symbolContext);
+  unresolved += http.unresolved;
   return {
-    nodes: graph.nodes,
-    edges: graph.edges,
-    evidence: graph.evidence,
+    graph,
+    routes: http.routes,
+    requests: http.requests,
     unresolved,
     unresolvedCalls,
-    unresolvedItems: graph.unresolvedItems.length
-      ? graph.unresolvedItems
-      : undefined,
-    notice: `Static imports, references, resolved calls, recognized React event attributes and rendered components, Next.js page entries, selected Express, Fastify and Next.js routes including inline handlers, literal fetch requests, requests through functions that forward their arguments to fetch, axios requests and recognized Prisma access are included. Requests, routes and handlers that could not be resolved are listed. HTTP matches are heuristic; static relationships are not runtime traces. ${configNotice}`,
+    configNotice,
   };
 }

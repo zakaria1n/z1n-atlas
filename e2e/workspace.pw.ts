@@ -84,21 +84,21 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   );
   // The AI-guided journey is answered by a mock that only uses identifiers
   // of the real analyzed graph; static requests go to the real backend.
-  const analysisGraph: {
+  let analysisGraph: {
     nodes: { id: string; name?: string }[];
     edges: { id: string; source: string; target: string; kind: string }[];
-  };
+  } | undefined;
   await page.route("**/api/journeys", async (route) => {
     const payload = route.request().postDataJSON() as {
       ai?: unknown;
       analysisId?: string;
     };
     if (!payload.ai) return route.continue();
-    const form = analysisGraph.nodes.find((node) => node.name === "Form")!;
-    const link = analysisGraph.edges.find(
+    const form = analysisGraph!.nodes.find((node) => node.name === "Form")!;
+    const link = analysisGraph!.edges.find(
       (edge) => edge.source === form.id && edge.kind === "calls",
     )!;
-    const callee = analysisGraph.nodes.find((node) => node.id === link.target)!;
+    const callee = analysisGraph!.nodes.find((node) => node.id === link.target)!;
     return route.fulfill({
       status: 200,
       headers: cors,

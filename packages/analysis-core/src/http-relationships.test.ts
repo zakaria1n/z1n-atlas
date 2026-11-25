@@ -48,8 +48,8 @@ const files = [
   },
 ];
 describe("full-stack HTTP evidence", () => {
-  it("connects a literal fetch to a mounted Express route as a heuristic with both sources", () => {
-    const graph = analyzeFiles(files);
+  it("connects a literal fetch to a mounted Express route as a heuristic with both sources", async () => {
+    const graph = await analyzeFiles(files);
     const edge = graph.edges.find((e) => e.kind === "http-route");
     expect(graphIsValid(graph, files)).toBe(true);
     expect(edge?.confidence).toBe("heuristic");
@@ -90,7 +90,7 @@ describe("full-stack HTTP evidence", () => {
       "Prisma user.create",
     );
   });
-  it("does not connect an unmatched method or a dynamic URL", () => {
+  it("does not connect an unmatched method or a dynamic URL", async () => {
     const modified = files.map((file) =>
       file.path === "src/client.ts"
         ? {
@@ -100,14 +100,14 @@ describe("full-stack HTTP evidence", () => {
           }
         : file,
     );
-    const graph = analyzeFiles(modified);
+    const graph = await analyzeFiles(modified);
     expect(graph.edges.filter((e) => e.kind === "http-route")).toEqual([]);
     expect(graph.unresolved).toBeGreaterThan(0);
     expect(graphIsValid(graph, modified)).toBe(true);
   });
-  it("does not leave orphan evidence for an unused mounted router", () => {
+  it("does not leave orphan evidence for an unused mounted router", async () => {
     const subset = files.filter((file) => file.path !== "src/routes.ts");
-    const graph = analyzeFiles(subset);
+    const graph = await analyzeFiles(subset);
     expect(graphIsValid(graph, subset)).toBe(true);
   });
 });
