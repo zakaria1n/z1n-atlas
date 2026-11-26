@@ -244,6 +244,32 @@ describe("claim-level evidence grounding", () => {
     );
   }, 30_000);
 
+  it("credits a citation folded across source lines", async () => {
+    const { graph, files, ids } = await bookingGraph();
+    // The decorator and the def live on adjacent lines; a citation quoting
+    // both as one folded fragment must still be located and credited.
+    const grounded = groundExplanations(
+      journey(
+        graph,
+        [ids.create],
+        [
+          {
+            nodeId: ids.create,
+            text: "The route is declared `status_code=201) async def create_booking(payload` with a 201 status.",
+          },
+        ],
+      ),
+      graph,
+      files,
+    );
+    const support = grounded.explanations?.[0].support;
+    expect(support?.level).toBe("source");
+    expect(support?.sourceRefs?.[0]?.startLine).toBeGreaterThan(0);
+    expect(support?.sourceRefs?.[0]?.endLine).toBeGreaterThan(
+      support?.sourceRefs?.[0]?.startLine,
+    );
+  }, 30_000);
+
   it("marks a mixed explanation as only partially supported", async () => {
     const { graph, files, ids } = await bookingGraph();
     const grounded = groundExplanations(

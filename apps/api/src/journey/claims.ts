@@ -68,6 +68,25 @@ function locateFragment(
       fragment: fragment.slice(0, 120),
     };
   }
+  // Folded code: models quote calls the source splits across lines, so a
+  // whitespace-insensitive window match is accepted as the same fragment.
+  const needle = fragment.replace(/\s+/g, "");
+  if (needle.length < 4) return null;
+  for (let index = 0; index < lines.length; index++) {
+    for (let span = 1; span <= 4 && index + span <= lines.length; span++) {
+      const window = lines
+        .slice(index, index + span)
+        .join("")
+        .replace(/\s+/g, "");
+      if (window.includes(needle))
+        return {
+          path,
+          startLine: index + 1,
+          endLine: index + span,
+          fragment: fragment.slice(0, 120),
+        };
+    }
+  }
   return null;
 }
 
