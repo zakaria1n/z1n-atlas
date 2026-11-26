@@ -42,6 +42,10 @@ import { createAnalysisCache } from "./analyzer/analysis-cache";
 import { createAnalysisJobs } from "./analyzer/analysis-jobs";
 import { MAX_GRAPH_BYTES } from "./analyzer/limits";
 import { serverAiCredential, type ServerAiCredential } from "./config";
+import {
+  externalDevAgentEnabled,
+  externalDevAgentGenerate,
+} from "./providers/external-dev-agent";
 function validatedGraph(
   value: unknown,
   files: { path: string; content: string }[],
@@ -484,6 +488,14 @@ export async function createApp(
   // Tells the frontend whether server-managed AI exists, without ever
   // exposing the credential itself. Only a development server can answer yes.
   app.get("/api/ai/status", async () => {
+    if (externalDevAgentEnabled())
+      return {
+        available: true as const,
+        provider: "dev-bridge",
+        ...(process.env.DEV_AGENT_BRIDGE_MODEL
+          ? { model: process.env.DEV_AGENT_BRIDGE_MODEL }
+          : {}),
+      };
     const credential = serverAiCredential();
     if (!credential) return { available: false as const };
     return {
@@ -592,6 +604,28 @@ export async function createApp(
           input.data.files,
         );
       const resolved = resolveAiCredential(input.data);
+      // Development-only external model bridge: the real runJourneyAgent
+      // loop, tools and validation run unchanged; only the model transport
+      // comes from the external dev module. Never active in production.
+      if (
+        input.data.serverAi &&
+        resolved.serverManaged &&
+        externalDevAgentEnabled()
+      ) {
+        process.stdout.write(
+          "AI journey served through the development agent bridge.\n",
+        );
+        const journey = await runJourneyAgent({
+          question: input.data.goal,
+          files: input.data.files,
+          graph,
+          generate: await externalDevAgentGenerate(),
+          signal: abort.signal,
+          maxRounds: Number(process.env.Z1N_JOURNEY_MAX_ROUNDS ?? 6),
+          maxToolCalls: Number(process.env.Z1N_JOURNEY_MAX_TOOL_CALLS ?? 18),
+        });
+        return journeySchema.parse(journey);
+      }
       if (resolved.credential) {
         // AI-guided mode: the model explores with controlled tools and every
         // identifier it cites is validated against the graph.
