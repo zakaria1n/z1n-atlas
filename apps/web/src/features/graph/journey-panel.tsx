@@ -247,6 +247,62 @@ export function JourneyPanel({
                     </button>
                     <span> · {node.kind ?? "file"}</span>
                     {text && <p className="journey-explanation">{text}</p>}
+                    {(journey.relatedOperations ?? []).some(
+                      (item) => item.ownerId === id,
+                    ) && (
+                      <section aria-label="Related database operations">
+                        <p>
+                          Related operations, listed by source location. This
+                          order does not establish runtime execution.
+                        </p>
+                        <ul>
+                          {(journey.relatedOperations ?? [])
+                            .filter((item) => item.ownerId === id)
+                            .sort((left, right) => {
+                              const a = graph.nodes.find(
+                                (node) => node.id === left.nodeId,
+                              )!;
+                              const b = graph.nodes.find(
+                                (node) => node.id === right.nodeId,
+                              )!;
+                              return (
+                                a.path.localeCompare(b.path) ||
+                                (a.startLine ?? 0) - (b.startLine ?? 0)
+                              );
+                            })
+                            .map((item) => {
+                              const operation = graph.nodes.find(
+                                (candidate) => candidate.id === item.nodeId,
+                              )!;
+                              const relation = graph.edges.find(
+                                (candidate) => candidate.id === item.edgeId,
+                              )!;
+                              const proof = graph.evidence.find(
+                                (candidate) =>
+                                  candidate.id === relation.evidenceId,
+                              )!;
+                              return (
+                                <li key={item.edgeId}>
+                                  <button
+                                    type="button"
+                                    className="text-link citation-button"
+                                    onClick={() =>
+                                      onOpenFile(
+                                        proof.filePath,
+                                        proof.startLine,
+                                      )
+                                    }
+                                  >
+                                    {operation.name ?? operation.path} ·{" "}
+                                    {proof.filePath}:{proof.startLine}
+                                  </button>{" "}
+                                  ({relation.confidence})
+                                </li>
+                              );
+                            })}
+                        </ul>
+                      </section>
+                    )}
                     {edge && (
                       <>
                         <p>

@@ -33,12 +33,13 @@ const MAX_ROUNDS = 6;
 const MAX_TOOL_CALLS = 18;
 const MAX_STEPS = 12;
 const MAX_MODEL_UNCERTAINTIES = 4;
-const TIMEOUT_MS = 8_000;
+const TIMEOUT_MS = 30_000;
+const TOTAL_TIMEOUT_MS = 180_000;
 const JSON_FENCE = /^\s*```(?:json)?\s*/i;
 
 export const JOURNEY_SYSTEM_INSTRUCTIONS =
   "You guide exploration of one analyzed source selection and explain how a feature works. " +
-  "Call tools to find the feature: search_code finds strings, read_file reads lines, " +
+  "Call tools to find the feature: find_symbols returns short node references, search_code finds strings, read_file reads lines, " +
   "get_graph_neighbors lists the verified relationships of a node with the identifiers to cite, " +
   "find_routes lists HTTP routes and their handlers. " +
   "Ground every step in tool results: cite only node identifiers that a tool returned, and never invent identifiers, files, lines or relationships. " +
@@ -46,10 +47,12 @@ export const JOURNEY_SYSTEM_INSTRUCTIONS =
   "A path explains a feature from its user-facing entry, such as a component or event handler, through requests, routes, handlers and services, to data access when the code supports it. " +
   "Stop where the analyzed evidence stops: if a request has no matching backend route, end the path there and say so in uncertainties. " +
   "If the tools cannot find the feature, return an empty steps array and explain what is missing. " +
-  "The exploration has a fixed budget of six turns: after two or three tool rounds, stop calling tools and give the final answer with the best evidence you have. " +
+  "Use short references returned by tools. Related database operations belonging to a path function can be listed separately; they are not consecutive execution steps. " +
+  "When persistence is relevant, use get_graph_neighbors with relationship database-access on the owning function and inspect additional pages if provided. " +
+  "Each pair of consecutive path steps must have an outgoing edge between those exact references; sibling callees of one function cannot be chained. " +
   "After exploring, reply with JSON only and no tool calls: " +
-  '{"steps":[{"nodeId":"<identifier from tools>","text":"<why this step belongs to the feature>"}],"uncertainties":["<limits such as unmatched boundaries or heuristic transitions>"]}. ' +
-  "Order steps from the entry point to the result and use at most 12 steps.";
+  '{"steps":[{"nodeId":"<reference from tools>","text":"<why this step belongs to the feature>"}],"relatedOperations":[{"ownerId":"<path reference>","nodeId":"<database reference>"}],"uncertainties":["<limits such as unmatched boundaries or heuristic transitions>"]}. ' +
+  "Order steps from the entry point to the result and use at most 12 steps. Keep each explanation under 600 characters and each uncertainty under 500 characters.";
 const draftSchema = z
   .object({
     steps: z
@@ -63,21 +66,44 @@ const draftSchema = z
       )
       .max(MAX_STEPS),
     uncertainties: z.array(z.string().min(1).max(500)).max(6).optional(),
+    relatedOperations: z
+      .array(
+        z
+          .object({
+            ownerId: z.string().min(1).max(1000),
+            nodeId: z.string().min(1).max(1000),
+          })
+          .strict(),
+      )
+      .max(24)
+      .optional(),
   })
   .strict();
 
-function parseDraft(text: string): z.infer<typeof draftSchema> | null {
+function parseDraft(
+  text: string,
+): { draft: z.infer<typeof draftSchema> } | { error: string } {
   const body = text.replace(JSON_FENCE, "").replace(/\s*```\s*$/, "");
   const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
+  if (start < 0 || end <= start) return { error: "No JSON object was found." };
   try {
     const parsed = draftSchema.safeParse(
       JSON.parse(body.slice(start, end + 1)),
     );
-    return parsed.success ? parsed.data : null;
+    return parsed.success
+      ? { draft: parsed.data }
+      : {
+          error: `Invalid answer structure: ${parsed.error.issues
+            .map(
+              (issue) =>
+                `${issue.path.join(".") || "answer"}: ${issue.message}`,
+            )
+            .join("; ")
+            .slice(0, 600)}`,
+        };
   } catch {
-    return null;
+    return { error: "The answer contains malformed JSON." };
   }
 }
 
@@ -85,6 +111,7 @@ type Built = { journey: Journey } | { error: string };
 function buildJourney(
   draft: z.infer<typeof draftSchema>,
   graph: CodeGraph,
+  resolveReference: (ref: string) => string | undefined,
 ): Built {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
   const label = (id: string) => {
@@ -98,14 +125,15 @@ function buildJourney(
   const nodeIds: string[] = [];
   const explanations: { nodeId: string; text: string }[] = [];
   for (const step of draft.steps) {
-    if (!byId.has(step.nodeId))
+    const nodeId = resolveReference(step.nodeId) ?? step.nodeId;
+    if (!byId.has(nodeId))
       return {
         error: `"${step.nodeId}" is not a node of this graph. Use identifiers exactly as a tool returned them.`,
       };
-    if (nodeIds.includes(step.nodeId))
+    if (nodeIds.includes(nodeId))
       return { error: `"${step.nodeId}" appears twice in the path.` };
-    nodeIds.push(step.nodeId);
-    explanations.push({ nodeId: step.nodeId, text: step.text });
+    nodeIds.push(nodeId);
+    explanations.push({ nodeId, text: step.text });
   }
   const edgeIds: string[] = [];
   const boundaries: string[] = [];
@@ -133,12 +161,37 @@ function buildJourney(
     uncertainties.push(
       "The model reported no limitations, but a selected path is never a verified runtime trace.",
     );
+  const relatedOperations: {
+    ownerId: string;
+    nodeId: string;
+    edgeId: string;
+  }[] = [];
+  for (const item of draft.relatedOperations ?? []) {
+    const ownerId = resolveReference(item.ownerId) ?? item.ownerId;
+    const nodeId = resolveReference(item.nodeId) ?? item.nodeId;
+    const edge = graph.edges.find(
+      (candidate) =>
+        candidate.source === ownerId &&
+        candidate.target === nodeId &&
+        candidate.kind === "database-access",
+    );
+    if (
+      !nodeIds.includes(ownerId) ||
+      byId.get(nodeId)?.kind !== "database" ||
+      !edge
+    )
+      return {
+        error: `Related operation ${item.nodeId} is not a verified database operation of path step ${item.ownerId}.`,
+      };
+    relatedOperations.push({ ownerId, nodeId, edgeId: edge.id });
+  }
   const candidate = journeySchema.parse({
     mode: "ai",
     nodeIds,
     edgeIds,
     uncertainties,
     explanations,
+    relatedOperations,
   });
   if (!journeyIsValid(candidate, graph))
     return { error: "The proposed path did not match the graph." };
@@ -151,6 +204,7 @@ export type JourneyAgentInput = {
   graph: CodeGraph;
   generate: AgentGenerate;
   signal?: AbortSignal;
+  maxRounds?: number;
 };
 
 /**
@@ -163,26 +217,40 @@ export async function runJourneyAgent(
   input: JourneyAgentInput,
 ): Promise<Journey> {
   const { question, files, graph, generate, signal } = input;
-  const unknown = (message: string): Journey => ({
-    mode: "ai",
-    nodeIds: [],
-    edgeIds: [],
-    uncertainties: [message],
-  });
+  let partial: Journey | undefined;
+  const unknown = (message: string): Journey =>
+    partial
+      ? {
+          ...partial,
+          uncertainties: [
+            ...partial.uncertainties.slice(0, 6),
+            "This is a partial path; later proposed steps could not be validated.",
+            message,
+          ],
+        }
+      : { mode: "ai", nodeIds: [], edgeIds: [], uncertainties: [message] };
   const tools = createJourneyTools(files, graph);
+  const totalTimeout = AbortSignal.timeout(TOTAL_TIMEOUT_MS);
   const messages: AgentMessage[] = [{ role: "user", text: question }];
   let toolCalls = 0;
   let corrective = 0;
-  for (let round = 0; round < MAX_ROUNDS; round++) {
+  const priorCalls = new Set<string>();
+  const maxRounds = Math.max(
+    1,
+    Math.min(20, Math.trunc(input.maxRounds ?? MAX_ROUNDS) || MAX_ROUNDS),
+  );
+  for (let round = 0; round < maxRounds; round++) {
     let turn: AgentTurn;
     try {
       turn = await generate({
         system: JOURNEY_SYSTEM_INSTRUCTIONS,
         messages,
         tools: tools.definitions,
-        signal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)])
-          : AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.any([
+          ...(signal ? [signal] : []),
+          totalTimeout,
+          AbortSignal.timeout(TIMEOUT_MS),
+        ]),
       });
     } catch {
       return unknown(
@@ -201,7 +269,25 @@ export async function runJourneyAgent(
         })),
       });
       for (const call of calls) {
-        const result = tools.execute(call);
+        let key = `${call.name}:${call.arguments}`;
+        try {
+          const args: unknown = JSON.parse(call.arguments || "{}");
+          if (args && typeof args === "object" && !Array.isArray(args))
+            key = `${call.name}:${JSON.stringify(Object.entries(args).sort(([a], [b]) => a.localeCompare(b)))}`;
+        } catch {
+          // Invalid arguments are reported by the tool itself.
+        }
+        const repeated = priorCalls.has(key);
+        priorCalls.add(key);
+        const result = repeated
+          ? {
+              name: call.name,
+              output: JSON.stringify({
+                notice:
+                  "This tool call was already answered; use the earlier result.",
+              }),
+            }
+          : tools.execute(call);
         messages.push({
           role: "tool",
           toolCallId: call.id,
@@ -217,8 +303,8 @@ export async function runJourneyAgent(
       }
       continue;
     }
-    const draft = parseDraft(turn.text);
-    if (!draft) {
+    const parsed = parseDraft(turn.text);
+    if ("error" in parsed) {
       if (corrective++) {
         return unknown(
           "The model did not return the expected JSON answer about this feature.",
@@ -227,16 +313,43 @@ export async function runJourneyAgent(
       messages.push({ role: "assistant", text: turn.text });
       messages.push({
         role: "user",
-        text: 'That answer was not valid. Reply with JSON only: {"steps":[{"nodeId":"...","text":"..."}],"uncertainties":["..."]}.',
+        text: `${parsed.error} Reply with JSON only: {"steps":[{"nodeId":"...","text":"..."}],"relatedOperations":[{"ownerId":"...","nodeId":"..."}],"uncertainties":["..."]}. Keep each step under 600 characters and each uncertainty under 500.`,
       });
       continue;
     }
-    const built = buildJourney(draft, graph);
+    const built = buildJourney(parsed.draft, graph, tools.resolveReference);
     if ("error" in built) {
-      if (corrective++) {
-        return unknown(
-          "The model proposed steps that the graph does not support, so no journey is shown. The static exploration mode can suggest a path by names.",
+      for (let size = parsed.draft.steps.length; size > 0; size--) {
+        const prefix = buildJourney(
+          {
+            ...parsed.draft,
+            steps: parsed.draft.steps.slice(0, size),
+            relatedOperations: [],
+          },
+          graph,
+          tools.resolveReference,
         );
+        if ("journey" in prefix) {
+          if (
+            prefix.journey.edgeIds.some(
+              (id) =>
+                graph.edges.find((edge) => edge.id === id)?.confidence ===
+                "heuristic",
+            )
+          )
+            prefix.journey.uncertainties.push(
+              "This partial path contains a heuristic relationship and is not a verified runtime trace.",
+            );
+          if (
+            !partial ||
+            prefix.journey.nodeIds.length > partial.nodeIds.length
+          )
+            partial = prefix.journey;
+          break;
+        }
+      }
+      if (corrective++) {
+        return unknown(`Invalid journey: ${built.error.slice(0, 400)}`);
       }
       messages.push({ role: "assistant", text: turn.text });
       messages.push({

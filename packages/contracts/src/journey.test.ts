@@ -30,6 +30,61 @@ const journey = (values: Record<string, unknown>) =>
     ...values,
   });
 describe("journey references", () => {
+  it("accepts related database operations only when attached by real evidence-backed edges", () => {
+    const operationsGraph: CodeGraph = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        { id: "db", path: "a.ts", exports: [], kind: "database" },
+      ],
+      edges: [
+        ...graph.edges,
+        {
+          id: "db-edge",
+          source: "a",
+          target: "db",
+          kind: "database-access",
+          confidence: "framework",
+          evidenceId: "e",
+        },
+      ],
+    };
+    const relatedOperations = [
+      { ownerId: "a", nodeId: "db", edgeId: "db-edge" },
+    ];
+    expect(
+      journeyIsValid(
+        journey({ nodeIds: ["a", "b"], edgeIds: ["edge"], relatedOperations }),
+        operationsGraph,
+      ),
+    ).toBe(true);
+    expect(
+      journeyIsValid(
+        journey({
+          nodeIds: ["a", "b"],
+          edgeIds: ["edge"],
+          relatedOperations: [{ ...relatedOperations[0], ownerId: "b" }],
+        }),
+        operationsGraph,
+      ),
+    ).toBe(false);
+    expect(
+      journeyIsValid(
+        journey({
+          nodeIds: ["a", "b"],
+          edgeIds: ["edge"],
+          relatedOperations: [{ ...relatedOperations[0], edgeId: "fake" }],
+        }),
+        operationsGraph,
+      ),
+    ).toBe(false);
+    expect(
+      journeyIsValid(
+        journey({ nodeIds: ["a", "b"], edgeIds: ["edge"], relatedOperations }),
+        { ...operationsGraph, evidence: [] },
+      ),
+    ).toBe(false);
+  });
   it("accepts directed paths and explicit unknown boundaries", () => {
     expect(
       journeyIsValid(

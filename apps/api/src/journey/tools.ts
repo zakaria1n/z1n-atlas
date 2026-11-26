@@ -38,6 +38,16 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
   if (!graphIsValid(graph, files)) throw new Error("Invalid graph evidence.");
   const evidence = createEvidenceTools(files, graph);
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const references = new Map<string, string>();
+  const nodeReferences = new Map<string, string>();
+  const reference = (id: string) => {
+    if (!nodeReferences.has(id)) {
+      const ref = `n${nodeReferences.size + 1}`;
+      nodeReferences.set(id, ref);
+      references.set(ref, id);
+    }
+    return nodeReferences.get(id)!;
+  };
   const label = (id: string) => {
     const node = byId.get(id);
     if (!node) return id;
@@ -46,21 +56,85 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
       : node.path;
   };
   const tools = {
+    find_symbols: (input: unknown) => {
+      const { query, path } = z
+        .object({
+          query: z.string().trim().min(2).max(100),
+          path: z.string().max(500).optional(),
+        })
+        .strict()
+        .parse(input);
+      const matches = graph.nodes.filter(
+        (node) =>
+          node.kind !== "file" &&
+          (!path || node.path.toLowerCase().includes(path.toLowerCase())) &&
+          (node.name ?? "").toLowerCase().includes(query.toLowerCase()),
+      );
+      return {
+        symbols: matches.slice(0, 15).map((node) => ({
+          ref: reference(node.id),
+          name: node.name,
+          kind: node.kind,
+          path: node.path,
+          line: node.startLine,
+        })),
+        truncated: matches.length > 15,
+      };
+    },
     search_code: (input: unknown) => evidence.searchCode(input),
     read_file: (input: unknown) => evidence.readFile(input),
     get_graph_neighbors: (input: unknown) => {
-      const result = evidence.getGraphNeighbors(input);
+      const args = z
+        .object({
+          nodeId: z.string().min(1).max(800),
+          offset: z.number().int().min(0).max(10000).optional(),
+          relationship: z
+            .enum([
+              "calls",
+              "requests",
+              "http-route",
+              "handles",
+              "handles-event",
+              "database-access",
+              "renders",
+            ])
+            .optional(),
+        })
+        .strict()
+        .parse(input);
+      const nodeId = references.get(args.nodeId) ?? args.nodeId;
+      if (!byId.has(nodeId)) throw new Error("Graph node is unavailable.");
+      const allEdges = graph.edges.filter(
+        (edge) =>
+          (edge.source === nodeId || edge.target === nodeId) &&
+          (!args.relationship || edge.kind === args.relationship),
+      );
+      const offset = args.offset ?? 0;
+      const edges = allEdges.slice(offset, offset + 8);
+      const visible = new Set(
+        edges.flatMap((edge) => [edge.source, edge.target]),
+      );
+      visible.add(nodeId);
       return {
-        ...result,
-        edges: result.edges.map((edge) => ({
-          id: edge.id,
-          from: label(edge.source),
-          sourceId: edge.source,
-          to: label(edge.target),
-          targetId: edge.target,
+        nodes: graph.nodes
+          .filter((node) => visible.has(node.id))
+          .map((node) => ({
+            ref: reference(node.id),
+            name: node.name,
+            kind: node.kind,
+            path: node.path,
+            line: node.startLine,
+          })),
+        edges: edges.map((edge) => ({
+          from: reference(edge.source),
+          to: reference(edge.target),
           relationship: edge.kind,
           confidence: edge.confidence,
         })),
+        nextOffset:
+          offset + edges.length < allEdges.length
+            ? offset + edges.length
+            : null,
       };
     },
     find_routes: (input: unknown) => {
@@ -79,6 +153,7 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
         .slice(0, 10)
         .map((node: GraphNode) => ({
           nodeId: node.id,
+          ref: reference(node.id),
           route: node.name,
           filePath: node.path,
           lines: [node.startLine, node.endLine],
@@ -89,6 +164,7 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
             .map((edge) => ({
               edgeId: edge.id,
               handlerId: edge.target,
+              handlerRef: reference(edge.target),
               handler: label(edge.target),
               relationship: edge.kind,
             })),
@@ -102,6 +178,20 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
     },
   };
   const definitions: JourneyToolDefinition[] = [
+    {
+      name: "find_symbols",
+      description:
+        "Find graph symbols by name, optionally restrict by path fragment, and obtain short references.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", minLength: 2, maxLength: 100 },
+          path: { type: "string", maxLength: 500 },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
     {
       name: "search_code",
       description:
@@ -134,11 +224,24 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
     {
       name: "get_graph_neighbors",
       description:
-        "List the verified relationships of one graph node, with the node and edge identifiers needed to cite them.",
+        "List graph relationships and short node references. Filter relationship to database-access to see related operations. If nextOffset is not null, pass it as offset to inspect the next page.",
       parameters: {
         type: "object",
         properties: {
           nodeId: { type: "string", maxLength: 800 },
+          offset: { type: "integer", minimum: 0, maximum: 10000 },
+          relationship: {
+            type: "string",
+            enum: [
+              "calls",
+              "requests",
+              "http-route",
+              "handles",
+              "handles-event",
+              "database-access",
+              "renders",
+            ],
+          },
         },
         required: ["nodeId"],
         additionalProperties: false,
@@ -178,7 +281,10 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
       const result = run(args);
       let output = JSON.stringify(result);
       if (output.length > MAX_RESULT_CHARS)
-        output = `${output.slice(0, MAX_RESULT_CHARS)}… [truncated]`;
+        output = JSON.stringify({
+          error:
+            "Result too large; narrow the search or requested source range.",
+        });
       return { name: call.name, output };
     } catch (error) {
       return {
@@ -187,5 +293,10 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
       };
     }
   }
-  return { definitions, execute, available: [...registry.keys()] };
+  return {
+    definitions,
+    execute,
+    available: [...registry.keys()],
+    resolveReference: (ref: string) => references.get(ref),
+  };
 }

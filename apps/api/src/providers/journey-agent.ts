@@ -9,7 +9,7 @@ import type {
 } from "../journey/agent";
 import type { JourneyToolDefinition } from "../journey/tools";
 
-const TOOL_TIMEOUT_MS = 8_000;
+const TOOL_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_TOKENS = 1_600;
 
 const openaiResponse = z.object({

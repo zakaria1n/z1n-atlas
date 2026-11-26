@@ -53,6 +53,18 @@ export const journeySchema = z
     nodeIds: z.array(z.string().min(1).max(1000)).max(12),
     edgeIds: z.array(z.string().min(1).max(2000)).max(11),
     uncertainties: z.array(z.string().min(1).max(500)).min(1).max(8),
+    relatedOperations: z
+      .array(
+        z
+          .object({
+            ownerId: z.string().min(1).max(1000),
+            nodeId: z.string().min(1).max(1000),
+            edgeId: z.string().min(1).max(2000),
+          })
+          .strict(),
+      )
+      .max(24)
+      .optional(),
     /** Why each step belongs to the feature; aligned with nodeIds when present. */
     explanations: z
       .array(
@@ -71,6 +83,29 @@ export type Journey = z.infer<typeof journeySchema>;
 export type JourneyRequest = z.infer<typeof journeyRequestSchema>;
 export function journeyIsValid(journey: Journey, graph: CodeGraph): boolean {
   const nodes = new Set(graph.nodes.map((node) => node.id));
+  const edges = new Map(graph.edges.map((edge) => [edge.id, edge]));
+  const evidence = new Set(graph.evidence.map((item) => item.id));
+  const operations = journey.relatedOperations ?? [];
+  if (new Set(operations.map((item) => item.edgeId)).size !== operations.length)
+    return false;
+  if (
+    !operations.every((item) => {
+      const edge = edges.get(item.edgeId);
+      const node = graph.nodes.find(
+        (candidate) => candidate.id === item.nodeId,
+      );
+      return Boolean(
+        journey.nodeIds.includes(item.ownerId) &&
+        node?.kind === "database" &&
+        edge?.kind === "database-access" &&
+        edge.source === item.ownerId &&
+        edge.target === item.nodeId &&
+        evidence.has(edge.evidenceId) &&
+        (edge.supportingEvidenceIds ?? []).every((id) => evidence.has(id)),
+      );
+    })
+  )
+    return false;
   if (
     !(journey.explanations ?? []).every(
       (explanation) =>
@@ -86,8 +121,6 @@ export function journeyIsValid(journey: Journey, graph: CodeGraph): boolean {
     new Set(journey.nodeIds).size !== journey.nodeIds.length
   )
     return false;
-  const edges = new Map(graph.edges.map((edge) => [edge.id, edge]));
-  const evidence = new Set(graph.evidence.map((item) => item.id));
   return (
     journey.nodeIds.every((id) => nodes.has(id)) &&
     journey.edgeIds.every((id, index) => {

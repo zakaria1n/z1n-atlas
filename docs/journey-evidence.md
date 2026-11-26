@@ -1,0 +1,7 @@
+# Journey evidence model
+
+A journey is an ordered path of source-backed graph relationships. It is a static explanation, not a runtime execution trace. Operations attached to a path function are listed separately and linked through their existing database-access evidence; their display order does not establish execution order. Conditional rollback and commit sites may both belong to the same function without both executing.
+
+The agent can locate symbols and use short, session-scoped references returned by its read-only tools. The backend resolves references and checks every path edge and related operation against the analyzed graph and its evidence. Unresolved boundaries and heuristic links remain visible. Agent exploration defaults to six rounds; the API process can set `Z1N_JOURNEY_MAX_ROUNDS` to a value from 1 to 20. Each run is bounded to 18 tool calls and 180 seconds, with a 30-second provider request limit and bounded provider output.
+
+The design was informed by inspection of GitNexus revision `50228e11abc2491e6391943288696671dd62c1d5`. GitNexus detects bounded linear call paths, exposes symbol context separately and records truncated exploration. Its optional intra-procedural control and data-flow analysis does not establish a cross-function runtime trace. Z1N Atlas independently implements its own representation; it does not include GitNexus source code. GitNexus is distributed under the PolyForm Noncommercial License.

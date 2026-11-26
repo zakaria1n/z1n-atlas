@@ -73,6 +73,188 @@ function scripted(
 }
 
 describe("AI-guided journey agent", () => {
+  it("retains a validated prefix when later proposed transitions remain invalid", async () => {
+    const invalid = final([
+      step(idOf("RegisterForm"), "Registration begins here."),
+      step(idOf("loadSession"), "Unrelated."),
+    ]);
+    const journey = await runJourneyAgent({
+      question: "How does registration work?",
+      files,
+      graph,
+      generate: scripted([invalid, invalid]),
+    });
+    expect(journey.nodeIds).toEqual([idOf("RegisterForm")]);
+    expect(journey.edgeIds).toEqual([]);
+    expect(journey.uncertainties.join(" ")).toContain("partial path");
+  });
+  it("recognizes repeated tool calls without repeating the evidence response", async () => {
+    let messages: unknown[] = [];
+    const call: AgentTurn = {
+      kind: "tools",
+      toolCalls: [
+        { id: "s", name: "search_code", arguments: '{"query":"register"}' },
+      ],
+    };
+    const generate = scripted(
+      [call, call, final([], ["No path was established."])],
+      (context) => {
+        messages = context.messages;
+      },
+    );
+    await runJourneyAgent({
+      question: "Find registration",
+      files,
+      graph,
+      generate,
+    });
+    expect(JSON.stringify(messages)).toContain(
+      "This tool call was already answered",
+    );
+  });
+  it("keeps transaction writes and conditional rollback as separately sourced Python operations", async () => {
+    const pythonFiles = loadFixture(
+      path.resolve(fixtureDir, "../fastapi-booking"),
+    );
+    const pythonGraph = await analyzeFiles(pythonFiles);
+    let ownerRef = "";
+    let round = 0;
+    const generate: AgentGenerate = async ({ messages }) => {
+      round++;
+      if (round === 1)
+        return {
+          kind: "tools",
+          toolCalls: [
+            {
+              id: "s",
+              name: "find_symbols",
+              arguments: '{"query":"create_booking"}',
+            },
+          ],
+        };
+      if (round === 2) {
+        const result = JSON.parse(
+          (messages.at(-1) as { content: string }).content,
+        );
+        ownerRef = result.symbols.find(
+          (item: { kind: string }) => item.kind === "function",
+        ).ref;
+        return {
+          kind: "tools",
+          toolCalls: [
+            {
+              id: "n",
+              name: "get_graph_neighbors",
+              arguments: JSON.stringify({
+                nodeId: ownerRef,
+                relationship: "database-access",
+              }),
+            },
+          ],
+        };
+      }
+      const result = JSON.parse(
+        (messages.at(-1) as { content: string }).content,
+      );
+      const operations = result.nodes.filter(
+        (item: { kind: string }) => item.kind === "database",
+      );
+      return {
+        kind: "final",
+        text: JSON.stringify({
+          steps: [
+            {
+              nodeId: ownerRef,
+              text: "The booking handler contains transaction operations.",
+            },
+          ],
+          relatedOperations: operations.map((item: { ref: string }) => ({
+            ownerId: ownerRef,
+            nodeId: item.ref,
+          })),
+          uncertainties: [
+            "A static relationship does not prove that a branch executed.",
+          ],
+        }),
+      };
+    };
+    const journey = await runJourneyAgent({
+      question: "Where is a booking persisted?",
+      files: pythonFiles,
+      graph: pythonGraph,
+      generate,
+    });
+    const names = (journey.relatedOperations ?? []).map(
+      (item) => pythonGraph.nodes.find((node) => node.id === item.nodeId)?.name,
+    );
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "SQLAlchemy write add Booking",
+        "SQLAlchemy flush",
+        "SQLAlchemy rollback",
+        "SQLAlchemy commit",
+      ]),
+    );
+    expect(journey.edgeIds).toEqual([]);
+  });
+  it("resolves issued references and keeps sibling database operations separate from the path", async () => {
+    let round = 0;
+    let ownerRef = "";
+    const generate: AgentGenerate = async ({ messages }) => {
+      round++;
+      if (round === 1)
+        return {
+          kind: "tools",
+          toolCalls: [
+            { id: "s", name: "find_symbols", arguments: '{"query":"create"}' },
+          ],
+        };
+      if (round === 2) {
+        const result = JSON.parse(
+          (messages.at(-1) as { content: string }).content,
+        );
+        ownerRef = result.symbols.find((item: { path: string }) =>
+          item.path.includes("repositories/user"),
+        ).ref;
+        return {
+          kind: "tools",
+          toolCalls: [
+            {
+              id: "n",
+              name: "get_graph_neighbors",
+              arguments: JSON.stringify({ nodeId: ownerRef }),
+            },
+          ],
+        };
+      }
+      const result = JSON.parse(
+        (messages.at(-1) as { content: string }).content,
+      );
+      const database = result.nodes.find(
+        (item: { kind: string }) => item.kind === "database",
+      );
+      return {
+        kind: "final",
+        text: JSON.stringify({
+          steps: [{ nodeId: ownerRef, text: "Writes a user." }],
+          relatedOperations: [{ ownerId: ownerRef, nodeId: database.ref }],
+          uncertainties: ["Static evidence does not prove execution."],
+        }),
+      };
+    };
+    const journey = await runJourneyAgent({
+      question: "How is a user saved?",
+      files,
+      graph,
+      generate,
+    });
+    expect(journey.nodeIds).toEqual([idOf("create", "repositories/user")]);
+    expect(journey.relatedOperations).toHaveLength(1);
+    expect(journey.relatedOperations?.[0].nodeId).toBe(
+      kindId("database", "Prisma user.create"),
+    );
+    expect(journey.edgeIds).toEqual([]);
+  });
   it("requests a correction when the model returns malformed JSON", async () => {
     const generate = scripted([
       { kind: "final", text: '{"steps": [}' },
@@ -160,6 +342,7 @@ describe("AI-guided journey agent", () => {
     ).toBe(true);
     expect(generate.calls).toBe(3);
     expect(seen[0].tools.map((tool) => tool.name)).toEqual([
+      "find_symbols",
       "search_code",
       "read_file",
       "get_graph_neighbors",

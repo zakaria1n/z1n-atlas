@@ -612,6 +612,7 @@ export async function createApp(
           graph,
           generate: createJourneyAgentGenerate(credential, fetch),
           signal: abort.signal,
+          maxRounds: Number(process.env.Z1N_JOURNEY_MAX_ROUNDS ?? 6),
         });
         return journeySchema.parse(journey);
       }
