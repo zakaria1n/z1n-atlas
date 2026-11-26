@@ -32,12 +32,11 @@ import { createProviderAdapter } from "./providers/discovery";
 import { ProviderError } from "./providers/contracts";
 import { testModel } from "./providers/test-model";
 import { probeToolCalling } from "./providers/model-probe";
-import { generateAnswer } from "./providers/generate-answer";
-import { answerQuestion } from "./evidence/answer";
-import { findJourney } from "./journey/find-journey";
+import { answerWithGraph } from "./orchestration/chat-graph";
 import { createChatModel } from "./orchestration/chat-model";
 import { DevBridgeChatModel } from "./orchestration/dev-bridge-model";
 import { runJourneyAgent } from "./orchestration/journey-graph";
+import { findJourney } from "./journey/find-journey";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 import { createAnalysisCache } from "./analyzer/analysis-cache";
 import { createAnalysisJobs } from "./analyzer/analysis-jobs";
@@ -46,7 +45,6 @@ import { serverAiCredential, type ServerAiCredential } from "./config";
 import {
   externalDevAgentEnabled,
   externalDevAgentGenerate,
-  externalDevChatGenerate,
 } from "./providers/external-dev-agent";
 function validatedGraph(
   value: unknown,
@@ -544,45 +542,34 @@ export async function createApp(
             : "Server-managed AI is unavailable.",
       });
     }
-    // Development-only chat transport through the external model bridge.
-    const bridgeChat =
+    // Development-only chat transport through the same external model
+    // bridge the journey uses, presented as a regular chat model.
+    const credential = resolved.credential!;
+    const model =
       input.data.serverAi && externalDevAgentEnabled()
-        ? await externalDevChatGenerate().catch(() => null)
-        : null;
+        ? new DevBridgeChatModel(await externalDevAgentGenerate())
+        : createChatModel({
+            provider: credential.provider,
+            apiKey: credential.apiKey,
+            model: credential.model as string,
+            maxOutputTokens: 1500,
+          });
     try {
       const { question, files } = input.data;
-      const credential = resolved.credential!;
-      const model = credential.model as string;
       const graph =
         analysisCache.get(input.data.analysisId, files) ??
         validatedGraph(
           await runAnalysis(files, { signal: abort.signal }),
           files,
         );
-      const answer = await answerQuestion(
+      const answer = await answerWithGraph({
         question,
         files,
         graph,
-        (context) =>
-          bridgeChat
-            ? bridgeChat({
-                question: context.question,
-                evidence: context.evidence,
-                system: context.system,
-                history: context.history,
-              })
-            : generateAnswer(
-                {
-                  provider: credential.provider,
-                  apiKey: credential.apiKey,
-                  model,
-                },
-                context,
-                abort.signal,
-              ),
-        input.data.history ?? [],
-      );
-      void credential;
+        model,
+        history: input.data.history ?? [],
+        signal: abort.signal,
+      });
       return chatAnswerSchema.parse(answer);
     } catch (error) {
       if (error instanceof AnalysisError)

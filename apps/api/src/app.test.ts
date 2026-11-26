@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { AIMessage } from "@langchain/core/messages";
 import { createApp } from "./app";
 import { createChatModel } from "./orchestration/chat-model";
 import { runAnalysis } from "./analyzer/run-analysis";
@@ -43,24 +44,29 @@ vi.mock("./providers/discovery", () => ({
 vi.mock("./providers/test-model", () => ({
   testModel: vi.fn(async () => undefined),
 }));
-vi.mock("./providers/generate-answer", () => ({
-  generateAnswer: vi.fn(async (_input, context) => ({
-    claims: [
-      {
-        text: "The source mentions login.",
-        evidenceIds: [context.evidence[0].id],
-      },
-    ],
-    uncertainties: [],
-  })),
-}));
 vi.mock("./orchestration/chat-model", () => ({
   createChatModel: vi.fn(() => ({
-    // The integration fails immediately, so the journey must come back as
-    // the honest provider-failure result instead of a static path.
-    bindTools: () => {
-      throw new Error("simulated provider outage");
-    },
+    // One scripted model serves both endpoints: chat cites the first
+    // supplied evidence id, the journey draft fails schema validation and
+    // exercises the honest-failure path.
+    bindTools: () => ({
+      invoke: async (
+        messages: { at: (index: number) => { content: unknown } }[],
+      ) => {
+        const payload = JSON.parse(String(messages.at(-1)!.content));
+        return new AIMessage(
+          JSON.stringify({
+            claims: [
+              {
+                text: "Cited from supplied evidence.",
+                evidenceIds: [payload.evidence?.[0]?.id ?? "missing"],
+              },
+            ],
+            uncertainties: [],
+          }),
+        );
+      },
+    }),
   })),
 }));
 let app: FastifyInstance;
