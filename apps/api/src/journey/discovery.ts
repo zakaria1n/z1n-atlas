@@ -26,7 +26,13 @@ function tokens(text: string): string[] {
       .replace(/([a-z])([A-Z])/g, "$1 $2")
       .toLowerCase()
       .match(/[a-z0-9]{3,}/g)
-      ?.map((word) => word.replace(/s$/, "").replace(/(ing|ed|es)$/, ""))
+      ?.map((word) =>
+        word
+          .replace(/s$/, "")
+          .replace(/(ing|ed|es)$/, "")
+          // Fold doubled final consonants so "committed" matches "commit".
+          .replace(/(.)\1$/, "$1"),
+      )
       .filter((word) => word.length > 2 && !STOP.has(word)) ?? []
   );
 }

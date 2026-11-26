@@ -5,9 +5,11 @@ import {
   type CodeGraph,
 } from "@z1n/contracts";
 import { createEvidenceTools } from "./tools";
+import { discoverCandidates } from "../journey/discovery";
 
 type Source = { path: string; content: string };
 type Citation = ChatAnswer["claims"][number]["citations"][number];
+const MAX_EVIDENCE = 30;
 const draftSchema = z
   .object({
     claims: z
@@ -61,9 +63,11 @@ export async function answerQuestion(
     )
     .slice(0, 8);
   const registry = new Map<string, Citation>();
+  let truncatedRetrieval = false;
   for (const term of terms) {
-    for (const match of tools.searchCode({ query: term }).matches) {
-      if (registry.size >= 30) break;
+    const search = tools.searchCode({ query: term });
+    if (search.truncated) truncatedRetrieval = true;
+    for (const match of search.matches) {
       const id = `source:${match.path}:${match.line}`;
       registry.set(id, {
         id,
@@ -75,23 +79,30 @@ export async function answerQuestion(
     }
   }
   const words = new Set(terms);
-  const ranked = graph.edges
-    .map((edge) => ({
+  const scored = [
+    ...graph.edges.map((edge) => ({
       edge,
       evidence: graph.evidence.find((item) => item.id === edge.evidenceId),
-    }))
-    .filter(
-      (item) =>
-        item.evidence &&
-        [...words].some((word) =>
-          `${item.evidence?.filePath} ${item.evidence?.snippet}`
+    })),
+  ]
+    .flatMap((item) => {
+      if (!item.evidence) return [];
+      const relevance = terms.reduce(
+        (sum, term) =>
+          sum +
+          (`${item.evidence?.filePath} ${item.evidence?.snippet}`
             .toLowerCase()
-            .includes(word),
-        ),
-    )
+            .split(term).length -
+            1),
+        0,
+      );
+      return relevance > 0
+        ? [{ edge: item.edge, evidence: item.evidence, relevance }]
+        : [];
+    })
+    .sort((left, right) => right.relevance - left.relevance)
     .slice(0, 15);
-  for (const { edge, evidence } of ranked) {
-    if (!evidence) continue;
+  for (const { edge, evidence } of scored) {
     registry.set(evidence.id, {
       id: evidence.id,
       filePath: evidence.filePath,
@@ -107,15 +118,90 @@ export async function answerQuestion(
       },
     });
   }
+  // Reserve room for ranked symbols and routes: string matches alone could
+  // fill the whole budget before discovery runs. Relationship-backed items
+  // are always kept; excess string matches are dropped as truncation.
+  const relationshipBacked = [...registry.values()].filter(
+    (item) => item.relationship,
+  );
+  const stringBacked = [...registry.values()].filter(
+    (item) => !item.relationship,
+  );
+  if (stringBacked.length > MAX_EVIDENCE - 8) truncatedRetrieval = true;
+  const trimmed = [
+    ...relationshipBacked,
+    ...stringBacked.slice(
+      0,
+      Math.max(0, MAX_EVIDENCE - 8 - relationshipBacked.length),
+    ),
+  ];
+  registry.clear();
+  for (const item of trimmed) registry.set(item.id, item);
+  // Ranked symbol and route candidates give general questions ("what does
+  // this app do?") the same discovery the journey uses, instead of relying
+  // only on string matches that miss symbols and routes entirely.
+  let rankedSeeds = 0;
+  let functionSeeds = 0;
+  for (const candidate of discoverCandidates(validQuestion, files, graph)) {
+    if (registry.size >= MAX_EVIDENCE) {
+      truncatedRetrieval = true;
+      break;
+    }
+    const id = `node:${candidate.node.id}`;
+    if (registry.has(id)) continue;
+    registry.set(id, {
+      id,
+      filePath: candidate.node.path,
+      startLine: candidate.node.startLine ?? 1,
+      endLine: candidate.node.endLine ?? candidate.node.startLine ?? 1,
+      snippet: `${candidate.node.name ?? candidate.node.path} (${candidate.node.kind ?? "file"}); matched: ${candidate.signals.join(", ")}`,
+    });
+    rankedSeeds++;
+    // Questions about persistence ("how is X committed?") need the verified
+    // database operations of the ranked functions — the raw ranking favors
+    // connected frontend symbols, so the related operations are seeded
+    // explicitly from the verified database-access edges of the first
+    // ranked functions.
+    if (
+      functionSeeds < 2 &&
+      (candidate.node.kind === "function" || candidate.node.kind === "method")
+    ) {
+      functionSeeds++;
+      const operations = graph.edges
+        .filter(
+          (edge) =>
+            edge.source === candidate.node.id &&
+            edge.kind === "database-access",
+        )
+        .slice(0, 4);
+      for (const edge of operations) {
+        const target = graph.nodes.find((node) => node.id === edge.target);
+        if (!target || registry.has(`node:${target.id}`)) continue;
+        if (registry.size >= MAX_EVIDENCE) {
+          truncatedRetrieval = true;
+          break;
+        }
+        registry.set(`node:${target.id}`, {
+          id: `node:${target.id}`,
+          filePath: target.path,
+          startLine: target.startLine ?? 1,
+          endLine: target.endLine ?? target.startLine ?? 1,
+          snippet: `${target.name ?? target.path} (${target.kind}); related operation of ${candidate.node.name ?? candidate.node.path}`,
+        });
+      }
+    }
+  }
+  if (registry.size > MAX_EVIDENCE) truncatedRetrieval = true;
   if (!registry.size)
     return {
       claims: [],
       uncertainties: ["No matching evidence was found in the selected files."],
     };
+  const evidenceItems = [...registry.values()].slice(0, MAX_EVIDENCE);
   const result = draftSchema.safeParse(
     await generate({
       question: validQuestion,
-      evidence: [...registry.values()],
+      evidence: evidenceItems,
       system: SYSTEM_INSTRUCTIONS,
     }),
   );
@@ -130,7 +216,7 @@ export async function answerQuestion(
   const claims: ChatAnswer["claims"] = [];
   for (const claim of result.data.claims) {
     const citations = [...new Set(claim.evidenceIds)].map((id) =>
-      registry.get(id),
+      evidenceItems.find((item) => item.id === id),
     );
     if (!citations.length || citations.some((item) => !item)) {
       rejected = true;
@@ -138,10 +224,14 @@ export async function answerQuestion(
     }
     claims.push({ text: claim.text, citations: citations as Citation[] });
   }
-  const uncertainties = result.data.uncertainties.slice(0, 7);
+  const uncertainties = result.data.uncertainties.slice(0, 6);
   if (rejected)
     uncertainties.push(
       "Some model statements were omitted because their evidence was missing or invalid.",
+    );
+  if (truncatedRetrieval)
+    uncertainties.push(
+      "Evidence retrieval was truncated; some relevant matches may be missing from the supplied context.",
     );
   if (!claims.length && !uncertainties.length)
     uncertainties.push("There is not enough verified evidence to answer.");
