@@ -87,9 +87,19 @@ export function createJourneyAgentGenerate(
   input: ProviderTestRequest,
   fetcher: typeof fetch = fetch,
 ): AgentGenerate {
+  // The caller's key authenticates every round of the exploration; without
+  // it the providers answer 401/403 and the journey ends unexplained.
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json",
+    ...(input.provider === "openai"
+      ? { Authorization: `Bearer ${input.apiKey}` }
+      : input.provider === "google"
+        ? { "x-goog-api-key": input.apiKey }
+        : {
+            "x-api-key": input.apiKey,
+            "anthropic-version": "2023-06-01",
+          }),
   };
   return async ({ system, messages, tools, signal }): Promise<AgentTurn> => {
     const timeout = AbortSignal.timeout(TOOL_TIMEOUT_MS);

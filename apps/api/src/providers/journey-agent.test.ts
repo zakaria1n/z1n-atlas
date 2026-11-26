@@ -29,13 +29,18 @@ const system = "Explore and answer with JSON.";
 function provider(providerName: ProviderTestRequest["provider"]) {
   return { ...input, provider: providerName };
 }
-type CapturedRequest = { url: string; body: Record<string, unknown> };
+type CapturedRequest = {
+  url: string;
+  body: Record<string, unknown>;
+  headers: Record<string, string>;
+};
 function mockFetcher(responses: unknown[]) {
   const requests: CapturedRequest[] = [];
   const fetcher = vi.fn(async (url: string | URL, init?: RequestInit) => {
     requests.push({
       url: String(url),
       body: JSON.parse(String(init?.body)),
+      headers: Object.fromEntries(new Headers(init?.headers).entries()),
     });
     const payload = responses[requests.length - 1];
     if (typeof payload === "number")
@@ -80,6 +85,8 @@ describe("journey tool-calling adapters", () => {
       ],
     });
     expect(requests[0].url).toBe("https://api.openai.com/v1/responses");
+    // The caller key must authenticate every round of the exploration.
+    expect(requests[0].headers.authorization).toBe("Bearer test-key");
     expect(requests[0].body.instructions).toBe(system);
     expect(requests[0].body.tools[0]).toMatchObject({
       type: "function",
@@ -133,6 +140,8 @@ describe("journey tool-calling adapters", () => {
       ],
     });
     expect(requests[0].url).toBe("https://api.anthropic.com/v1/messages");
+    expect(requests[0].headers["x-api-key"]).toBe("test-key");
+    expect(requests[0].headers["anthropic-version"]).toBe("2023-06-01");
     expect(requests[0].body.system).toBe(system);
     expect(requests[0].body.tools[0].input_schema).toEqual(tools[0].parameters);
     const second = await generate({
@@ -198,6 +207,7 @@ describe("journey tool-calling adapters", () => {
       "generativelanguage.googleapis.com/v1beta/models/demo:generateContent",
     );
     expect(requests[0].body.systemInstruction.parts[0].text).toBe(system);
+    expect(requests[0].headers["x-goog-api-key"]).toBe("test-key");
     expect(requests[0].body.tools[0].functionDeclarations[0].name).toBe(
       "search_code",
     );
