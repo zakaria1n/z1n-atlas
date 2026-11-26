@@ -244,7 +244,7 @@ describe("claim-level evidence grounding", () => {
     );
   }, 30_000);
 
-  it("supports the verified half of a mixed explanation and flags the rest", async () => {
+  it("marks a mixed explanation as only partially supported", async () => {
     const { graph, files, ids } = await bookingGraph();
     const grounded = groundExplanations(
       journey(
@@ -261,15 +261,63 @@ describe("claim-level evidence grounding", () => {
       files,
     );
     const support = grounded.explanations?.[0].support;
-    // The verified fragment keeps the claim grounded at source level, while
-    // the unverified citation is simply not recorded as evidence.
-    expect(support?.level).toBe("source");
+    // The verified citation is kept, the invented one is recorded as
+    // missing, and the whole statement is marked partially supported
+    // instead of reading as fully verified.
+    expect(support?.level).toBe("partial");
+    expect(support?.note).toContain("Partially supported");
+    expect(support?.note).toContain("`bookingAudit.writeLegacy()`");
     expect(JSON.stringify(support?.sourceRefs).includes("writeLegacy")).toBe(
       false,
     );
     expect(
       JSON.stringify(support?.sourceRefs).includes("db.add(booking)"),
     ).toBe(true);
+  }, 30_000);
+
+  it("does not credit a fragment located far outside the explained node", async () => {
+    const { graph, files, ids } = await bookingGraph();
+    // The router declaration exists in bookings.py but far from the
+    // create_booking handler: present in the file, unrelated to the
+    // explained node's location.
+    const grounded = groundExplanations(
+      journey(
+        graph,
+        [ids.create],
+        [
+          {
+            nodeId: ids.create,
+            text: 'The handler opens with `router = APIRouter(prefix="/api", tags=["reservations"])`.',
+          },
+        ],
+      ),
+      graph,
+      files,
+    );
+    const support = grounded.explanations?.[0].support;
+    expect(support?.level).toBe("inference");
+    expect(support?.sourceRefs).toBeUndefined();
+  }, 30_000);
+
+  it("marks a statement with no citations and no verified edges as interpretation", async () => {
+    const { graph, files, ids } = await bookingGraph();
+    const grounded = groundExplanations(
+      journey(
+        graph,
+        [ids.model],
+        [
+          {
+            nodeId: ids.model,
+            text: "This model probably enforces booking quotas at the database level.",
+          },
+        ],
+      ),
+      graph,
+      files,
+    );
+    const support = grounded.explanations?.[0].support;
+    expect(support?.level).toBe("inference");
+    expect(support?.note).toContain("model's interpretation");
   }, 30_000);
 
   it("never discards previously validated journeys while grounding", async () => {

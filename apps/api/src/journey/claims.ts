@@ -17,21 +17,28 @@ const absenceClaim =
 
 /**
  * Extracts the code fragments an explanation cites: quoted spans, dotted
- * expressions and called names of at least four characters. Only fragments
- * later found verbatim in the analyzed file support a statement; the rest
- * are ignored, never treated as proof.
+ * expressions and called names of at least four characters. Quoted spans
+ * and dotted expressions are meaningful assertions — their absence from the
+ * analyzed file weakens the statement; a bare call name is only a hint.
+ * Every fragment is later measured verbatim against the analyzed file;
+ * unmatched ones are never treated as proof.
  */
-function citedFragments(text: string): string[] {
-  const fragments = new Set<string>();
+function citedFragments(
+  text: string,
+): { fragment: string; meaningful: boolean }[] {
+  const fragments = new Map<string, boolean>();
   for (const match of text.matchAll(/[`"']([^`"']{4,80})[`"']/g))
-    fragments.add(match[1].trim());
+    fragments.set(match[1].trim(), true);
   for (const match of text.matchAll(
     /\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+\b/g,
   ))
-    fragments.add(match[0]);
+    fragments.set(match[0], true);
   for (const match of text.matchAll(/\b([A-Za-z_$][\w$]{3,})\s*\(/g))
-    fragments.add(`${match[1]}(`);
-  return [...fragments].filter((fragment) => fragment.length >= 4).slice(0, 6);
+    if (!fragments.has(`${match[1]}(`)) fragments.set(`${match[1]}(`, false);
+  return [...fragments]
+    .map(([fragment, meaningful]) => ({ fragment, meaningful }))
+    .filter((item) => item.fragment.length >= 4)
+    .slice(0, 6);
 }
 
 /** The analyzed-file range that contains a fragment verbatim, if any. */
@@ -98,25 +105,35 @@ function groundExplanation(
     (edge) => edge!.confidence !== "heuristic",
   );
   // Cited fragments: the model's own wording is measured against the file.
+  // Partial support is judged on meaningful citations (quoted spans and
+  // dotted expressions); a bare call name that matches nothing is a hint,
+  // not a failed assertion.
   const sourceRefs: ExplanationSupport["sourceRefs"] = [];
-  for (const fragment of citedFragments(text)) {
+  const missingMeaningful: string[] = [];
+  for (const { fragment, meaningful } of citedFragments(text)) {
     const lines = fileLines.get(node.path);
     const located = lines ? locateFragment(fragment, node.path, lines) : null;
     if (
       located &&
       located.startLine <= (node.endLine ?? 0) + 2 &&
       located.endLine >= (node.startLine ?? 1) - 2
-    )
+    ) {
       sourceRefs.push(located);
+    } else if (meaningful) {
+      missingMeaningful.push(fragment);
+    }
     if (sourceRefs.length >= 3) break;
   }
   const edgeIds = (heuristicEdges.length ? heuristicEdges : supportedEdges)
     .slice(0, 2)
     .map((edge) => edge!.id);
   // The weakest relevant support wins: a heuristic transition is never
-  // silently upgraded, even when the model also quotes real code.
+  // silently upgraded, even when the model also quotes real code, and a
+  // statement with both verified and missing citations is only partially
+  // supported — never presented as fully verified.
   let level: SupportLevel;
   if (heuristicEdges.length) level = "heuristic";
+  else if (sourceRefs.length && missingMeaningful.length) level = "partial";
   else if (sourceRefs.length) level = "source";
   else if (supportedEdges.length) level = "relationship";
   else level = "inference";
@@ -125,11 +142,19 @@ function groundExplanation(
     notes.push(
       "The transition to this step is a heuristic URL and method match, not a verified call.",
     );
+  if (level === "partial")
+    notes.push(
+      `Partially supported: ${missingMeaningful
+        .map((fragment) => `\`${fragment}\``)
+        .join(
+          " and ",
+        )} was not found in the analyzed file; the remainder of the statement rests on the verified citation(s) and the rest is the model's interpretation.`,
+    );
   if (level === "inference")
     notes.push(
       "No cited code fragment or verified relationship supports this statement; treat it as the model's interpretation.",
     );
-  if (certaintyClaim.test(text) && level !== "source")
+  if (certaintyClaim.test(text) && level !== "source" && level !== "partial")
     text = `[Static analysis — not runtime-verified] ${text}`;
   if (
     persistenceCall.test(text) &&

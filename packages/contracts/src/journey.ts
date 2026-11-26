@@ -49,14 +49,18 @@ export const journeyModeSchema = z.enum(["ai", "static"]);
 export type JourneyMode = z.infer<typeof journeyModeSchema>;
 /**
  * How strongly the backend could support an explanation, in decreasing
- * order. `source` means the explanation cites code fragments the backend
- * found verbatim in the analyzed file; `relationship` means a verified
- * graph edge backs it; `heuristic` means the backing edge is itself a
- * heuristic match; `inference` means nothing mechanical supports the
- * statement and it must be read as the model's interpretation.
+ * order. `source` means every meaningful code fragment the explanation
+ * cites was found verbatim in the analyzed file; `partial` means some
+ * cited fragments were verified while other meaningful citations in the
+ * same statement were not found, so the whole statement is only partially
+ * supported; `relationship` means a verified graph edge backs it;
+ * `heuristic` means the backing edge is itself a heuristic match;
+ * `inference` means nothing mechanical supports the statement and it must
+ * be read as the model's interpretation.
  */
 export const supportLevelSchema = z.enum([
   "source",
+  "partial",
   "relationship",
   "heuristic",
   "inference",

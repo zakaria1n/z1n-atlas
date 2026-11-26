@@ -701,6 +701,10 @@ button:disabled {
   background: #e4ecff;
   color: #174eb5;
 }
+.support-partial {
+  background: #ffe4d1;
+  color: #9a4b12;
+}
 .support-heuristic {
   background: #fef3c7;
   color: #8a5a09;

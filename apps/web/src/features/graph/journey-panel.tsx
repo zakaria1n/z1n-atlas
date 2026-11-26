@@ -105,6 +105,11 @@ export function JourneyPanel({
       badge: "relationship-backed",
       title: "A verified graph relationship supports this statement.",
     },
+    partial: {
+      badge: "partially supported",
+      title:
+        "Some cited code was verified, but other citations in this statement were not found; read it as only partially supported.",
+    },
     heuristic: {
       badge: "heuristic match",
       title:
@@ -353,6 +358,17 @@ export function JourneyPanel({
                                 (candidate) =>
                                   candidate.id === relation.evidenceId,
                               )!;
+                              const name = operation.name ?? "";
+                              const conditional = /\b(flush|rollback)\b/i.test(
+                                name,
+                              );
+                              const kindLabel = /\bwrite\b/i.test(name)
+                                ? "write — code presence, not a runtime guarantee"
+                                : /\b(?:get|scalar|scalars|query|read)\b/i.test(
+                                      name,
+                                    )
+                                  ? "read"
+                                  : "transaction boundary — may be conditional";
                               return (
                                 <li key={item.edgeId}>
                                   <button
@@ -368,6 +384,10 @@ export function JourneyPanel({
                                     {operation.name ?? operation.path} ·{" "}
                                     {proof.filePath}:{proof.startLine}
                                   </button>{" "}
+                                  <span className="operation-kind">
+                                    {kindLabel}
+                                    {conditional ? " (conditional)" : ""}
+                                  </span>{" "}
                                   ({relation.confidence})
                                 </li>
                               );
