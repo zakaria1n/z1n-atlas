@@ -6,6 +6,7 @@ import {
 } from "@z1n/contracts";
 import { createEvidenceTools } from "./tools";
 import { EvidenceRegistry } from "./registry";
+import { createLexicalIndex } from "./lexical-index";
 import { discoverCandidates } from "../journey/discovery";
 
 type Source = { path: string; content: string };
@@ -159,15 +160,32 @@ export function collectEvidence(
   const items = collected.list();
   const relationshipBacked = items.filter((item) => item.relationship);
   const stringBacked = items.filter((item) => !item.relationship);
-  if (stringBacked.length > MAX_EVIDENCE - 8) truncatedRetrieval = true;
+  // Reserved room: at least twelve slots stay open for indexed lexical
+  // anchors and ranked discovery candidates so keyword and general
+  // questions keep receiving symbol-level evidence.
+  const reserved = 12;
+  if (stringBacked.length > MAX_EVIDENCE - reserved) truncatedRetrieval = true;
   const registry = new EvidenceRegistry(MAX_EVIDENCE);
   registry.refill([
     ...relationshipBacked,
     ...stringBacked.slice(
       0,
-      Math.max(0, MAX_EVIDENCE - 8 - relationshipBacked.length),
+      Math.max(0, MAX_EVIDENCE - reserved - relationshipBacked.length),
     ),
   ]);
+  // Indexed lexical retrieval ranks symbols for the whole question in one
+  // query (benchmarked ahead of the per-term scans it complements), so
+  // keyword and general questions receive concrete anchors first.
+  const lexical = createLexicalIndex(files, graph);
+  for (const hit of lexical.search(question, 6)) {
+    registry.add({
+      id: `node:${hit.nodeId}`,
+      filePath: hit.path,
+      startLine: hit.startLine,
+      endLine: hit.endLine,
+      snippet: `${hit.name ?? hit.path} (${hit.kind ?? "file"}); lexical match`,
+    });
+  }
   // Ranked symbol and route candidates give general questions ("what does
   // this app do?") the same discovery the journey uses, instead of relying
   // only on string matches that miss symbols and routes entirely.
