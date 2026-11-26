@@ -101,7 +101,7 @@ async function modelFor(
     } catch (error) {
       if (!(error instanceof ProviderError)) throw error;
       lastError = error;
-      if (error.code === "INVALID_KEY") throw error;
+      if (error.code !== "UNSUPPORTED_MODEL") throw error;
       const successor = /use models\/([a-z0-9._-]+)/i.exec(error.message)?.[1];
       if (successor && !tried.has(successor)) queue.unshift(successor);
     }
