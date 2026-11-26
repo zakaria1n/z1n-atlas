@@ -49,3 +49,30 @@ export async function externalDevAgentGenerate(): Promise<AgentGenerate> {
     return { kind: "final", text: turn.text ?? "" };
   };
 }
+
+/** The same external transport, for the Chat answer contract. */
+export async function externalDevChatGenerate(): Promise<
+  (context: {
+    question: string;
+    evidence: unknown[];
+    system: string;
+    history?: unknown[];
+  }) => Promise<unknown>
+> {
+  const bridgePath = process.env.DEV_AGENT_BRIDGE_PATH!;
+  const bridge = (await import(bridgePath)) as {
+    createChatGenerate?: () => Promise<
+      (context: {
+        question: string;
+        evidence: unknown[];
+        system: string;
+        history?: unknown[];
+      }) => Promise<unknown>
+    >;
+  };
+  if (typeof bridge.createChatGenerate !== "function")
+    throw new Error(
+      "The development chat bridge must export createChatGenerate().",
+    );
+  return bridge.createChatGenerate();
+}

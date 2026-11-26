@@ -28,6 +28,9 @@ export function Assistant({
   const [answer, setAnswer] = useState<ChatAnswer | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [turns, setTurns] = useState<
+    { role: "user" | "assistant"; text: string }[]
+  >([]);
   const pending = useRef<AbortController | null>(null);
   useEffect(() => () => pending.current?.abort(), []);
   function cancel() {
@@ -53,6 +56,8 @@ export function Assistant({
           consent: true,
           providerConsent: true,
           analysisId,
+          // Bounded follow-up context: the last two exchanges only.
+          history: turns.slice(-4),
           ...(ownKey
             ? {
                 ai: {
@@ -66,7 +71,19 @@ export function Assistant({
         },
         controller.signal,
       );
-      if (pending.current === controller) setAnswer(result);
+      if (pending.current === controller) {
+        setAnswer(result);
+        setTurns((current) => [
+          ...current,
+          { role: "user", text: question },
+          {
+            role: "assistant",
+            text:
+              result.claims.map((claim) => claim.text).join(" ") ||
+              result.uncertainties.join(" "),
+          },
+        ]);
+      }
     } catch (reason) {
       if (pending.current === controller)
         setError(

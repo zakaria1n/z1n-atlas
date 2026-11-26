@@ -31,6 +31,8 @@ export type AnswerContext = {
   question: string;
   evidence: Citation[];
   system: string;
+  /** Bounded prior turns for follow-up questions. */
+  history?: { role: "user" | "assistant"; text: string }[];
 };
 
 export async function answerQuestion(
@@ -38,6 +40,7 @@ export async function answerQuestion(
   files: Source[],
   graph: CodeGraph,
   generate: (context: AnswerContext) => Promise<unknown>,
+  history: { role: "user" | "assistant"; text: string }[] = [],
 ): Promise<ChatAnswer> {
   const validQuestion = z.string().trim().min(2).max(1000).parse(question);
   const tools = createEvidenceTools(files, graph);
@@ -203,6 +206,7 @@ export async function answerQuestion(
       question: validQuestion,
       evidence: evidenceItems,
       system: SYSTEM_INSTRUCTIONS,
+      history,
     }),
   );
   if (!result.success)

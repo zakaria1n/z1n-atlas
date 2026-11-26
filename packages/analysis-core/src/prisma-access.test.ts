@@ -39,4 +39,23 @@ describe("Prisma source evidence", () => {
       false,
     );
   });
+  it("detects operations through a singleton factory that constructs the client", async () => {
+    const graph = await analyzeFiles([
+      {
+        path: "src/db.ts",
+        content:
+          'import { PrismaClient } from "@prisma/client";\nfunction makeClient(){ return { client: new PrismaClient() }; }\nexport const db = makeClient().client;',
+      },
+      {
+        path: "src/app.ts",
+        content:
+          'import { db } from "./db";\nfunction load(id: string){ return db.user.findUnique({ where: { id } }); }',
+      },
+    ]);
+    const edge = graph.edges.find((item) => item.kind === "database-access");
+    expect(edge).toBeTruthy();
+    expect(graph.nodes.find((node) => node.id === edge?.target)?.name).toBe(
+      "Prisma user.findUnique",
+    );
+  });
 });

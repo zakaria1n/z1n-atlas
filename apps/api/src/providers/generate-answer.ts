@@ -16,6 +16,7 @@ export async function generateAnswer(
   };
   const content = JSON.stringify({
     question: context.question,
+    history: context.history ?? [],
     evidence: context.evidence,
   });
   let text: string | undefined;

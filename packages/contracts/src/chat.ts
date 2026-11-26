@@ -16,6 +16,19 @@ export const chatRequestSchema = z
       .extend({ providerConsent: z.literal(true) })
       .optional(),
     serverAi: z.boolean().optional(),
+    // Bounded prior conversation for follow-up questions; never leaks across
+    // repositories because each request still carries its own file selection.
+    history: z
+      .array(
+        z
+          .object({
+            role: z.enum(["user", "assistant"]),
+            text: z.string().min(1).max(500),
+          })
+          .strict(),
+      )
+      .max(6)
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

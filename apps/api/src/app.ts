@@ -45,6 +45,7 @@ import { serverAiCredential, type ServerAiCredential } from "./config";
 import {
   externalDevAgentEnabled,
   externalDevAgentGenerate,
+  externalDevChatGenerate,
 } from "./providers/external-dev-agent";
 function validatedGraph(
   value: unknown,
@@ -73,6 +74,7 @@ function resolveAiCredential(
           model: string;
         };
         serverAi?: boolean;
+        history?: unknown[];
       }
     | undefined,
 ): {
@@ -541,6 +543,11 @@ export async function createApp(
             : "Server-managed AI is unavailable.",
       });
     }
+    // Development-only chat transport through the external model bridge.
+    const bridgeChat =
+      input.data.serverAi && externalDevAgentEnabled()
+        ? await externalDevChatGenerate().catch(() => null)
+        : null;
     try {
       const { question, files } = input.data;
       const credential = resolved.credential!;
@@ -551,13 +558,30 @@ export async function createApp(
           await runAnalysis(files, { signal: abort.signal }),
           files,
         );
-      const answer = await answerQuestion(question, files, graph, (context) =>
-        generateAnswer(
-          { provider: credential.provider, apiKey: credential.apiKey, model },
-          context,
-          abort.signal,
-        ),
+      const answer = await answerQuestion(
+        question,
+        files,
+        graph,
+        (context) =>
+          bridgeChat
+            ? bridgeChat({
+                question: context.question,
+                evidence: context.evidence,
+                system: context.system,
+                history: context.history,
+              })
+            : generateAnswer(
+                {
+                  provider: credential.provider,
+                  apiKey: credential.apiKey,
+                  model,
+                },
+                context,
+                abort.signal,
+              ),
+        input.data.history ?? [],
       );
+      void credential;
       return chatAnswerSchema.parse(answer);
     } catch (error) {
       if (error instanceof AnalysisError)

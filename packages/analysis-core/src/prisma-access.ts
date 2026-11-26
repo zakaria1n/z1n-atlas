@@ -28,10 +28,11 @@ function prismaClient(
   const declaration = unalias(node.getSymbol())
     ?.getDeclarations()
     .find(Node.isVariableDeclaration);
-  const initializer = declaration?.getInitializer();
-  if (!initializer || !Node.isNewExpression(initializer)) return null;
-  const constructor = initializer.getExpression();
-  if (!Node.isIdentifier(constructor)) return null;
+  if (!declaration) return null;
+  const initializer = declaration.getInitializer();
+  if (!initializer) return null;
+  const constructor = findPrismaConstructor(initializer, declaration);
+  if (!constructor || !Node.isIdentifier(constructor)) return null;
   const imports = constructor.getSymbol()?.getDeclarations() ?? [];
   for (const item of imports) {
     const statement = item.getFirstAncestorByKind(SyntaxKind.ImportDeclaration);
@@ -50,6 +51,55 @@ function prismaClient(
       return { declaration: initializer, importNode: statement };
   }
   return null;
+}
+/** Any `new PrismaClient(...)` construction inside a node's subtree. */
+function prismaConstructionIn(node: Node): Node | undefined {
+  for (const candidate of node.getDescendants()) {
+    if (!Node.isNewExpression(candidate)) continue;
+    if (Node.isIdentifier(candidate.getExpression()))
+      return candidate.getExpression();
+  }
+  return undefined;
+}
+/**
+ * Follows one hop through a local factory called by the initializer: the
+ * common `global.prisma ?? makeClient()` singleton pattern constructs the
+ * client inside the factory's return statement.
+ */
+function factoryConstructorIn(
+  declaration: Node,
+  initializer: Node,
+): Node | undefined {
+  for (const candidate of initializer.getDescendants()) {
+    if (
+      !Node.isCallExpression(candidate) ||
+      !Node.isIdentifier(candidate.getExpression())
+    )
+      continue;
+    const name = candidate.getExpression().getText();
+    const source = declaration.getSourceFile();
+    // Factories are declared either as functions or as arrow functions
+    // assigned to variables (`const makeClient = () => new PrismaClient()`).
+    const factory = source.getFunction(name)?.getBody();
+    const variable = source.getVariableDeclaration(name);
+    const arrow = variable?.getInitializer();
+    const body =
+      factory ??
+      (arrow && Node.isArrowFunction(arrow) ? arrow.getBody() : undefined);
+    if (!body) continue;
+    return prismaConstructionIn(body);
+  }
+  return undefined;
+}
+function findPrismaConstructor(
+  initializer: Node,
+  declaration: Node,
+): Node | undefined {
+  if (Node.isNewExpression(initializer)) return initializer.getExpression();
+  return (
+    prismaConstructionIn(initializer) ??
+    factoryConstructorIn(declaration, initializer)
+  );
 }
 export function addPrismaAccess(context: SymbolContext): void {
   const { graph } = context;
