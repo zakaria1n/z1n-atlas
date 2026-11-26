@@ -9,11 +9,16 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@fastify/cors": "^11.4.3",
+    "@langchain/anthropic": "^1.6.6",
+    "@langchain/core": "^1.5.1",
+    "@langchain/google-genai": "^2.3.7",
+    "@langchain/langgraph": "^1.7.5",
+    "@langchain/openai": "^1.8.5",
+    "@z1n/analysis-core": "workspace:*",
     "@z1n/contracts": "workspace:*",
     "fastify": "^5.12.8",
-    "@fastify/cors": "^11.4.3",
-    "zod": "^4.6.7",
-    "@z1n/analysis-core": "workspace:*"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

@@ -1,114 +1,65 @@
-import { z } from "zod";
+import {
+  HumanMessage,
+  SystemMessage,
+  type BaseMessage,
+} from "@langchain/core/messages";
 import type { ProviderTestRequest } from "@z1n/contracts";
 import type { AnswerContext } from "../evidence/answer";
 import { ProviderError } from "./contracts";
-import { providerJson } from "./http";
+import {
+  createChatModel,
+  providerErrorFrom,
+  type ToolCallingModel,
+} from "../orchestration/chat-model";
 
+const CHAT_MAX_OUTPUT_TOKENS = 1500;
+
+function answerText(message: BaseMessage): string {
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .map((block) =>
+      block && typeof block === "object" && "text" in block
+        ? String(block.text)
+        : "",
+    )
+    .join("");
+}
+
+/**
+ * One shared model call for the chat answer: the provider integrations own
+ * the request format, the answer is parsed into the evidence draft here.
+ */
 export async function generateAnswer(
   input: ProviderTestRequest,
   context: AnswerContext,
   signal?: AbortSignal,
-  fetcher: typeof fetch = fetch,
+  model: Pick<ToolCallingModel, "invoke"> = createChatModel({
+    provider: input.provider,
+    apiKey: input.apiKey,
+    model: input.model,
+    maxOutputTokens: CHAT_MAX_OUTPUT_TOKENS,
+  }),
 ): Promise<unknown> {
-  const common = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-  const content = JSON.stringify({
-    question: context.question,
-    history: context.history ?? [],
-    evidence: context.evidence,
-  });
-  let text: string | undefined;
-  if (input.provider === "openai") {
-    const result = await providerJson(
-      "https://api.openai.com/v1/responses",
-      { ...common, Authorization: `Bearer ${input.apiKey}` },
-      fetcher,
-      signal,
-      {
-        model: input.model,
-        instructions: context.system,
-        input: content,
-        max_output_tokens: 1500,
-      },
-    );
-    const parsed = z
-      .object({
-        output: z.array(
-          z.object({
-            content: z
-              .array(
-                z.object({ type: z.string(), text: z.string().optional() }),
-              )
-              .optional(),
+  let text: string;
+  try {
+    const response = await model.invoke(
+      [
+        new SystemMessage(context.system),
+        new HumanMessage(
+          JSON.stringify({
+            question: context.question,
+            history: context.history ?? [],
+            evidence: context.evidence,
           }),
         ),
-      })
-      .safeParse(result);
-    text = parsed.success
-      ? parsed.data.output
-          .flatMap((item) => item.content ?? [])
-          .find((part) => part.type === "output_text")?.text
-      : undefined;
-  } else if (input.provider === "google") {
-    const result = await providerJson(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
-      { ...common, "x-goog-api-key": input.apiKey },
-      fetcher,
-      signal,
-      {
-        systemInstruction: { parts: [{ text: context.system }] },
-        contents: [{ role: "user", parts: [{ text: content }] }],
-        generationConfig: {
-          maxOutputTokens: 1500,
-          responseMimeType: "application/json",
-        },
-      },
+      ],
+      { signal },
     );
-    const parsed = z
-      .object({
-        candidates: z.array(
-          z.object({
-            content: z.object({
-              parts: z.array(z.object({ text: z.string().optional() })),
-            }),
-          }),
-        ),
-      })
-      .safeParse(result);
-    text = parsed.success
-      ? parsed.data.candidates[0]?.content.parts.find((part) => part.text)?.text
-      : undefined;
-  } else {
-    const result = await providerJson(
-      "https://api.anthropic.com/v1/messages",
-      {
-        ...common,
-        Authorization: `Bearer ${input.apiKey}`,
-        "anthropic-version": "2026-10-21",
-      },
-      fetcher,
-      signal,
-      {
-        model: input.model,
-        system: context.system,
-        max_tokens: 1500,
-        messages: [{ role: "user", content }],
-      },
-    );
-    const parsed = z
-      .object({
-        content: z.array(
-          z.object({ type: z.string(), text: z.string().optional() }),
-        ),
-      })
-      .safeParse(result);
-    text = parsed.success
-      ? parsed.data.content.find((part) => part.type === "text")?.text
-      : undefined;
+    text = answerText(response);
+  } catch (error) {
+    throw providerErrorFrom(error);
   }
-  if (!text)
+  if (!text.trim())
     throw new ProviderError(
       "INVALID_RESPONSE",
       "The provider did not return a text answer.",

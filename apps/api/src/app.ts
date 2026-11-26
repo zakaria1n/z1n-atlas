@@ -35,8 +35,9 @@ import { probeToolCalling } from "./providers/model-probe";
 import { generateAnswer } from "./providers/generate-answer";
 import { answerQuestion } from "./evidence/answer";
 import { findJourney } from "./journey/find-journey";
-import { runJourneyAgent } from "./journey/agent";
-import { createJourneyAgentGenerate } from "./providers/journey-agent";
+import { createChatModel } from "./orchestration/chat-model";
+import { DevBridgeChatModel } from "./orchestration/dev-bridge-model";
+import { runJourneyAgent } from "./orchestration/journey-graph";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 import { createAnalysisCache } from "./analyzer/analysis-cache";
 import { createAnalysisJobs } from "./analyzer/analysis-jobs";
@@ -628,8 +629,8 @@ export async function createApp(
           input.data.files,
         );
       const resolved = resolveAiCredential(input.data);
-      // Development-only external model bridge: the real runJourneyAgent
-      // loop, tools and validation run unchanged; only the model transport
+      // Development-only external model bridge: the same runJourneyAgent
+      // graph, tools and validation run unchanged; only the model transport
       // comes from the external dev module. Never active in production.
       if (
         input.data.serverAi &&
@@ -643,7 +644,7 @@ export async function createApp(
           question: input.data.goal,
           files: input.data.files,
           graph,
-          generate: await externalDevAgentGenerate(),
+          model: new DevBridgeChatModel(await externalDevAgentGenerate()),
           signal: abort.signal,
           maxRounds: Number(process.env.Z1N_JOURNEY_MAX_ROUNDS ?? 6),
           maxToolCalls: Number(process.env.Z1N_JOURNEY_MAX_TOOL_CALLS ?? 18),
@@ -668,7 +669,7 @@ export async function createApp(
           question: input.data.goal,
           files: input.data.files,
           graph,
-          generate: createJourneyAgentGenerate(credential, fetch),
+          model: createChatModel({ ...credential, maxOutputTokens: 1600 }),
           signal: abort.signal,
           maxRounds: Number(process.env.Z1N_JOURNEY_MAX_ROUNDS ?? 6),
           maxToolCalls: Number(process.env.Z1N_JOURNEY_MAX_TOOL_CALLS ?? 18),

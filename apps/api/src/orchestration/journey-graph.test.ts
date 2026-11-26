@@ -3,9 +3,21 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { analyzeFiles } from "@z1n/analysis-core";
-import { runJourneyAgent, type AgentGenerate, type AgentTurn } from "./agent";
-import { completePersistenceEvidence } from "./complete-evidence";
-import { createJourneyTools } from "./tools";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import {
+  AIMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+  type BaseMessage,
+} from "@langchain/core/messages";
+import type { ChatResult } from "@langchain/core/outputs";
+import { runJourneyAgent } from "./journey-graph";
+import { completePersistenceEvidence } from "../journey/complete-evidence";
+import {
+  createJourneyTools,
+  type JourneyToolDefinition,
+} from "../journey/tools";
 
 const fixtureDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -45,36 +57,91 @@ const kindId = (kind: string, name: string) => {
   return node.id;
 };
 const step = (nodeId: string, text: string) => ({ nodeId, text });
-const final = (steps: unknown, uncertainties: string[] = []): AgentTurn => ({
-  kind: "final",
-  text: JSON.stringify({ steps, uncertainties }),
-});
-function scripted(
-  turns: AgentTurn[],
-  onCall?: (context: {
-    round: number;
-    messages: unknown[];
-    tools: { name: string }[];
-  }) => void,
-): AgentGenerate & { calls: number } {
-  const state = { round: 0 };
-  const generate = async (input: Parameters<AgentGenerate>[0]) => {
-    onCall?.({
-      round: state.round,
-      messages: input.messages,
-      tools: input.tools.map((tool) => ({ name: tool.name })),
-    });
-    const turn = turns[state.round];
-    state.round += 1;
-    if (!turn) throw new Error("The scripted provider ran out of turns.");
-    return turn;
+
+type ScriptTurn =
+  | { text: string; toolCalls?: undefined }
+  | {
+      toolCalls: { id: string; name: string; arguments: string }[];
+      text?: undefined;
+    }
+  | { error: Error }
+  | ((messages: BaseMessage[]) => ScriptTurn);
+
+/**
+ * Stands in for a provider integration: replays scripted turns (static or
+ * computed from the conversation so far) and records what the journey graph
+ * actually sent and bound. The bound clone shares state with the original,
+ * so assertions read the same counters.
+ */
+class FakeChatModel extends BaseChatModel {
+  shared = {
+    calls: 0,
+    seen: [] as BaseMessage[][],
+    boundTools: [] as unknown[],
   };
-  return Object.defineProperty(generate, "calls", {
-    get: () => state.round,
-  });
+  constructor(private readonly turns: ScriptTurn[]) {
+    super({});
+  }
+  _llmType(): string {
+    return "fake";
+  }
+  get calls(): number {
+    return this.shared.calls;
+  }
+  get seen(): BaseMessage[][] {
+    return this.shared.seen;
+  }
+  get boundTools(): unknown[] {
+    return this.shared.boundTools;
+  }
+  override bindTools(tools: unknown[]): FakeChatModel {
+    const bound = new FakeChatModel(this.turns);
+    bound.shared = this.shared;
+    bound.shared.boundTools = tools;
+    return bound;
+  }
+  async _generate(messages: BaseMessage[]): Promise<ChatResult> {
+    this.shared.calls += 1;
+    this.shared.seen.push(messages);
+    const scripted = this.turns[this.shared.calls - 1];
+    const turn = typeof scripted === "function" ? scripted(messages) : scripted;
+    if (!turn) throw new Error("The scripted model ran out of turns.");
+    if ("error" in turn && turn.error) throw turn.error;
+    if (turn.toolCalls)
+      return {
+        generations: [
+          {
+            text: "",
+            message: new AIMessage({
+              content: "",
+              tool_calls: turn.toolCalls.map((call) => ({
+                id: call.id,
+                name: call.name,
+                args: JSON.parse(call.arguments) as Record<string, unknown>,
+              })),
+            }),
+          },
+        ],
+      };
+    const text = turn.text ?? "";
+    return { generations: [{ text, message: new AIMessage(text) }] };
+  }
 }
 
-describe("AI-guided journey agent", () => {
+const final = (steps: unknown[], uncertainties: string[] = []): ScriptTurn => ({
+  text: JSON.stringify({ steps, uncertainties }),
+});
+const toolsTurn = (id: string, name: string, args: string): ScriptTurn => ({
+  toolCalls: [{ id, name, arguments: args }],
+});
+const lastToolAnswer = (messages: BaseMessage[]): string => {
+  const last = messages.at(-1);
+  if (!(last instanceof ToolMessage))
+    throw new Error("The scripted turn expected a tool answer.");
+  return String(last.content);
+};
+
+describe("AI-guided journey graph", () => {
   it("returns a bounded source page with a continuation instead of discarding long excerpts", () => {
     const longFiles = [
       {
@@ -102,18 +169,18 @@ describe("AI-guided journey agent", () => {
     expect(page.truncated).toBe(true);
   });
   it("allows a bounded second correction when a model returns prose twice", async () => {
-    const generate = scripted([
-      { kind: "final", text: "I will inspect the code." },
-      { kind: "final", text: "I need one more lookup." },
+    const model = new FakeChatModel([
+      { text: "I will inspect the code." },
+      { text: "I need one more lookup." },
       final([], ["Insufficient evidence."]),
     ]);
     const journey = await runJourneyAgent({
       question: "Find an unknown feature",
       files,
       graph,
-      generate,
+      model,
     });
-    expect(generate.calls).toBe(3);
+    expect(model.calls).toBe(3);
     expect(journey.uncertainties).toEqual(["Insufficient evidence."]);
   });
   it("paginates routes and reports an empty search without claiming feature absence", () => {
@@ -181,7 +248,7 @@ describe("AI-guided journey agent", () => {
     const original = pythonGraph.nodes.find(
       (node) => node.id === write.target,
     )!;
-    const graph = {
+    const ambiguous = {
       ...pythonGraph,
       nodes: [
         ...pythonGraph.nodes,
@@ -199,7 +266,7 @@ describe("AI-guided journey agent", () => {
         edgeIds: [],
         uncertainties: ["Static analysis."],
       },
-      graph,
+      ambiguous,
       "Save booking in database",
     );
     expect(result.relatedOperations ?? []).toEqual([]);
@@ -212,17 +279,16 @@ describe("AI-guided journey agent", () => {
     const owner = pythonGraph.nodes.find(
       (node) => node.name === "create_booking" && node.kind === "function",
     )!;
-    const generate = scripted([
-      final(
-        [step(owner.id, "Creates a booking.")],
-        ["No push mechanism exists in this repository."],
-      ),
-    ]);
     const journey = await runJourneyAgent({
       question: "Where is the booking committed to the database?",
       files: pythonFiles,
       graph: pythonGraph,
-      generate,
+      model: new FakeChatModel([
+        final(
+          [step(owner.id, "Creates a booking.")],
+          ["No push mechanism exists in this repository."],
+        ),
+      ]),
     });
     const names = (journey.relatedOperations ?? []).map(
       (item) => pythonGraph.nodes.find((node) => node.id === item.nodeId)?.name,
@@ -252,34 +318,33 @@ describe("AI-guided journey agent", () => {
       question: "How does registration work?",
       files,
       graph,
-      generate: scripted([invalid, invalid]),
+      model: new FakeChatModel([invalid, invalid]),
     });
     expect(journey.nodeIds).toEqual([idOf("RegisterForm")]);
     expect(journey.edgeIds).toEqual([]);
     expect(journey.uncertainties.join(" ")).toContain("partial path");
   });
   it("recognizes repeated tool calls without repeating the evidence response", async () => {
-    let messages: unknown[] = [];
-    const call: AgentTurn = {
-      kind: "tools",
-      toolCalls: [
-        { id: "s", name: "search_code", arguments: '{"query":"register"}' },
-      ],
-    };
-    const generate = scripted(
-      [call, call, final([], ["No path was established."])],
-      (context) => {
-        messages = context.messages;
-      },
-    );
+    const call = toolsTurn("s", "search_code", '{"query":"register"}');
+    const model = new FakeChatModel([
+      call,
+      call,
+      final([], ["No path was established."]),
+    ]);
     await runJourneyAgent({
       question: "Find registration",
       files,
       graph,
-      generate,
+      model,
     });
-    expect(JSON.stringify(messages)).toContain(
-      "This tool call was already answered",
+    const answers = model.seen
+      .flat()
+      .filter(
+        (message): message is ToolMessage => message instanceof ToolMessage,
+      )
+      .map((message) => String(message.content));
+    expect(answers).toContainEqual(
+      expect.stringContaining("This tool call was already answered"),
     );
   });
   it("keeps transaction writes and conditional rollback as separately sourced Python operations", async () => {
@@ -288,71 +353,52 @@ describe("AI-guided journey agent", () => {
     );
     const pythonGraph = await analyzeFiles(pythonFiles);
     let ownerRef = "";
-    let round = 0;
-    const generate: AgentGenerate = async ({ messages }) => {
-      round++;
-      if (round === 1)
-        return {
-          kind: "tools",
-          toolCalls: [
-            {
-              id: "s",
-              name: "find_symbols",
-              arguments: '{"query":"create_booking"}',
-            },
-          ],
-        };
-      if (round === 2) {
-        const result = JSON.parse(
-          (messages.at(-1) as { content: string }).content,
-        );
-        ownerRef = result.symbols.find(
+    const model = new FakeChatModel([
+      toolsTurn("s", "find_symbols", '{"query":"create_booking"}'),
+      (messages) => {
+        const result = JSON.parse(lastToolAnswer(messages));
+        const fn = result.symbols.find(
           (item: { kind: string }) => item.kind === "function",
-        ).ref;
+        );
+        ownerRef = fn.ref;
+        return toolsTurn(
+          "n",
+          "get_graph_neighbors",
+          JSON.stringify({
+            nodeId: ownerRef,
+            relationship: "database-access",
+          }),
+        );
+      },
+      (messages) => {
+        const result = JSON.parse(lastToolAnswer(messages));
+        const operations = result.nodes.filter(
+          (item: { kind: string }) => item.kind === "database",
+        );
         return {
-          kind: "tools",
-          toolCalls: [
-            {
-              id: "n",
-              name: "get_graph_neighbors",
-              arguments: JSON.stringify({
+          text: JSON.stringify({
+            steps: [
+              {
                 nodeId: ownerRef,
-                relationship: "database-access",
-              }),
-            },
-          ],
+                text: "The booking handler contains transaction operations.",
+              },
+            ],
+            relatedOperations: operations.map((item: { ref: string }) => ({
+              ownerId: ownerRef,
+              nodeId: item.ref,
+            })),
+            uncertainties: [
+              "A static relationship does not prove that a branch executed.",
+            ],
+          }),
         };
-      }
-      const result = JSON.parse(
-        (messages.at(-1) as { content: string }).content,
-      );
-      const operations = result.nodes.filter(
-        (item: { kind: string }) => item.kind === "database",
-      );
-      return {
-        kind: "final",
-        text: JSON.stringify({
-          steps: [
-            {
-              nodeId: ownerRef,
-              text: "The booking handler contains transaction operations.",
-            },
-          ],
-          relatedOperations: operations.map((item: { ref: string }) => ({
-            ownerId: ownerRef,
-            nodeId: item.ref,
-          })),
-          uncertainties: [
-            "A static relationship does not prove that a branch executed.",
-          ],
-        }),
-      };
-    };
+      },
+    ]);
     const journey = await runJourneyAgent({
       question: "Where is a booking persisted?",
       files: pythonFiles,
       graph: pythonGraph,
-      generate,
+      model,
     });
     const names = (journey.relatedOperations ?? []).map(
       (item) => pythonGraph.nodes.find((node) => node.id === item.nodeId)?.name,
@@ -368,55 +414,40 @@ describe("AI-guided journey agent", () => {
     expect(journey.edgeIds).toEqual([]);
   });
   it("resolves issued references and keeps sibling database operations separate from the path", async () => {
-    let round = 0;
     let ownerRef = "";
-    const generate: AgentGenerate = async ({ messages }) => {
-      round++;
-      if (round === 1)
-        return {
-          kind: "tools",
-          toolCalls: [
-            { id: "s", name: "find_symbols", arguments: '{"query":"create"}' },
-          ],
-        };
-      if (round === 2) {
-        const result = JSON.parse(
-          (messages.at(-1) as { content: string }).content,
-        );
-        ownerRef = result.symbols.find((item: { path: string }) =>
+    const model = new FakeChatModel([
+      toolsTurn("s", "find_symbols", '{"query":"create"}'),
+      (messages) => {
+        const result = JSON.parse(lastToolAnswer(messages));
+        const fn = result.symbols.find((item: { path: string }) =>
           item.path.includes("repositories/user"),
-        ).ref;
+        );
+        ownerRef = fn.ref;
+        return toolsTurn(
+          "n",
+          "get_graph_neighbors",
+          JSON.stringify({ nodeId: ownerRef }),
+        );
+      },
+      (messages) => {
+        const result = JSON.parse(lastToolAnswer(messages));
+        const database = result.nodes.find(
+          (item: { kind: string }) => item.kind === "database",
+        );
         return {
-          kind: "tools",
-          toolCalls: [
-            {
-              id: "n",
-              name: "get_graph_neighbors",
-              arguments: JSON.stringify({ nodeId: ownerRef }),
-            },
-          ],
+          text: JSON.stringify({
+            steps: [{ nodeId: ownerRef, text: "Writes a user." }],
+            relatedOperations: [{ ownerId: ownerRef, nodeId: database.ref }],
+            uncertainties: ["Static evidence does not prove execution."],
+          }),
         };
-      }
-      const result = JSON.parse(
-        (messages.at(-1) as { content: string }).content,
-      );
-      const database = result.nodes.find(
-        (item: { kind: string }) => item.kind === "database",
-      );
-      return {
-        kind: "final",
-        text: JSON.stringify({
-          steps: [{ nodeId: ownerRef, text: "Writes a user." }],
-          relatedOperations: [{ ownerId: ownerRef, nodeId: database.ref }],
-          uncertainties: ["Static evidence does not prove execution."],
-        }),
-      };
-    };
+      },
+    ]);
     const journey = await runJourneyAgent({
       question: "How is a user saved?",
       files,
       graph,
-      generate,
+      model,
     });
     expect(journey.nodeIds).toEqual([idOf("create", "repositories/user")]);
     expect(journey.relatedOperations).toHaveLength(1);
@@ -426,75 +457,53 @@ describe("AI-guided journey agent", () => {
     expect(journey.edgeIds).toEqual([]);
   });
   it("requests a correction when the model returns malformed JSON", async () => {
-    const generate = scripted([
-      { kind: "final", text: '{"steps": [}' },
+    const model = new FakeChatModel([
+      { text: '{"steps": [}' },
       final([], ["The feature could not be established."]),
     ]);
     const journey = await runJourneyAgent({
       question: "How does an unknown feature work?",
       files,
       graph,
-      generate,
+      model,
     });
-    expect(generate.calls).toBe(2);
+    expect(model.calls).toBe(2);
     expect(journey.nodeIds).toEqual([]);
     expect(journey.uncertainties[0]).toContain("could not be established");
   });
   it("explores with tools and reports a full-stack path backed by the graph", async () => {
-    const seen: {
-      tools: { name: string }[];
-      messages: unknown[];
-    }[] = [];
-    const generate = scripted(
-      [
-        {
-          kind: "tools",
-          toolCalls: [
-            {
-              id: "t1",
-              name: "search_code",
-              arguments: '{"query":"register"}',
-            },
-          ],
-        },
-        {
-          kind: "tools",
-          toolCalls: [
-            {
-              id: "t2",
-              name: "get_graph_neighbors",
-              arguments: JSON.stringify({ nodeId: idOf("handleRegister") }),
-            },
-          ],
-        },
-        final(
-          [
-            step(idOf("RegisterForm"), "The registration form."),
-            step(idOf("handleRegister"), "Submits the form."),
-            step(
-              kindId("http-call", "POST /api/auth/register"),
-              "Sends the credentials.",
-            ),
-            step(
-              kindId("route", "POST /api/auth/register"),
-              "Backend route that receives them.",
-            ),
-            step(idOf("register"), "Controller for registration."),
-            step(idOf("create", "services/user"), "Creates the account."),
-            step(idOf("create", "repositories/user"), "Writes the row."),
-            step(kindId("database", "Prisma user.create"), "Stores the user."),
-          ],
-          ["The route match is heuristic."],
-        ),
-      ],
-      (context) =>
-        seen.push({ tools: context.tools, messages: context.messages }),
-    );
+    const model = new FakeChatModel([
+      toolsTurn("t1", "search_code", '{"query":"register"}'),
+      toolsTurn(
+        "t2",
+        "get_graph_neighbors",
+        JSON.stringify({ nodeId: idOf("handleRegister") }),
+      ),
+      final(
+        [
+          step(idOf("RegisterForm"), "The registration form."),
+          step(idOf("handleRegister"), "Submits the form."),
+          step(
+            kindId("http-call", "POST /api/auth/register"),
+            "Sends the credentials.",
+          ),
+          step(
+            kindId("route", "POST /api/auth/register"),
+            "Backend route that receives them.",
+          ),
+          step(idOf("register"), "Controller for registration."),
+          step(idOf("create", "services/user"), "Creates the account."),
+          step(idOf("create", "repositories/user"), "Writes the row."),
+          step(kindId("database", "Prisma user.create"), "Stores the user."),
+        ],
+        ["The route match is heuristic."],
+      ),
+    ]);
     const journey = await runJourneyAgent({
       question: "How does user registration work?",
       files,
       graph,
-      generate,
+      model,
     });
     expect(journey.mode).toBe("ai");
     expect(journey.nodeIds[0]).toBe(idOf("RegisterForm"));
@@ -519,8 +528,11 @@ describe("AI-guided journey agent", () => {
     expect(
       journey.uncertainties.some((note) => note.includes("heuristic")),
     ).toBe(true);
-    expect(generate.calls).toBe(3);
-    expect(seen[0].tools.map((tool) => tool.name)).toEqual([
+    expect(model.calls).toBe(3);
+    // The bound definitions cover exactly the read-only tool surface.
+    expect(
+      (model.boundTools as JourneyToolDefinition[]).map((tool) => tool.name),
+    ).toEqual([
       "discover_feature",
       "find_symbols",
       "search_code",
@@ -529,42 +541,36 @@ describe("AI-guided journey agent", () => {
       "find_routes",
     ]);
     // The final round's context must contain the relationship lookup answer.
-    expect(JSON.stringify(seen[2].messages).includes("handles-event")).toBe(
+    expect(JSON.stringify(model.seen.at(-1)).includes("handles-event")).toBe(
       true,
     );
   });
   it("follows a different feature without registration-specific handling", async () => {
-    const generate = scripted([
-      {
-        kind: "tools",
-        toolCalls: [
-          { id: "t1", name: "find_routes", arguments: '{"path":"session"}' },
-        ],
-      },
-      final([
-        step(idOf("SessionStatus"), "Shows the current session."),
-        step(idOf("handleRefresh"), "Asks for a refresh."),
-        step(
-          kindId("http-call", "GET /api/auth/session"),
-          "Requests the session.",
-        ),
-        step(kindId("route", "GET /api/auth/session"), "Session endpoint."),
-        step(
-          idOf("GET /api/auth/session handler"),
-          "Inline handler of the route.",
-        ),
-        step(idOf("loadSession"), "Loads the stored session."),
-        step(
-          kindId("database", "Prisma session.findUnique"),
-          "Reads the session row.",
-        ),
-      ]),
-    ]);
     const journey = await runJourneyAgent({
       question: "How does refreshing a session work?",
       files,
       graph,
-      generate,
+      model: new FakeChatModel([
+        toolsTurn("t1", "find_routes", '{"path":"session"}'),
+        final([
+          step(idOf("SessionStatus"), "Shows the current session."),
+          step(idOf("handleRefresh"), "Asks for a refresh."),
+          step(
+            kindId("http-call", "GET /api/auth/session"),
+            "Requests the session.",
+          ),
+          step(kindId("route", "GET /api/auth/session"), "Session endpoint."),
+          step(
+            idOf("GET /api/auth/session handler"),
+            "Inline handler of the route.",
+          ),
+          step(idOf("loadSession"), "Loads the stored session."),
+          step(
+            kindId("database", "Prisma session.findUnique"),
+            "Reads the session row.",
+          ),
+        ]),
+      ]),
     });
     expect(journey.mode).toBe("ai");
     expect(journey.nodeIds).toEqual([
@@ -578,26 +584,24 @@ describe("AI-guided journey agent", () => {
     ]);
   });
   it("rejects invented identifiers and recovers after a correction", async () => {
-    let corrective = "";
-    const generate = scripted(
-      [
-        final([step("component/Invented.tsx#1", "Made up.")]),
-        final([step(idOf("RegisterForm"), "Entry form.")]),
-      ],
-      (context) => {
-        const last = context.messages[context.messages.length - 1] as
-          { role: string; text?: string } | undefined;
-        if (last?.role === "user") corrective = last.text ?? "";
-      },
-    );
+    const model = new FakeChatModel([
+      final([step("component/Invented.tsx#1", "Made up.")]),
+      final([step(idOf("RegisterForm"), "Entry form.")]),
+    ]);
     const journey = await runJourneyAgent({
       question: "Where does registration start?",
       files,
       graph,
-      generate,
+      model,
     });
-    expect(corrective).toContain("not a node of this graph");
-    expect(generate.calls).toBe(2);
+    const corrections = model.seen
+      .flat()
+      .filter(
+        (message): message is HumanMessage => message instanceof HumanMessage,
+      )
+      .map((message) => String(message.content));
+    expect(corrections.join(" ")).toContain("not a node of this graph");
+    expect(model.calls).toBe(2);
     expect(journey.mode).toBe("ai");
     expect(journey.nodeIds).toEqual([idOf("RegisterForm")]);
     expect(journey.edgeIds).toEqual([]);
@@ -608,7 +612,7 @@ describe("AI-guided journey agent", () => {
     ).toBe(true);
   });
   it("rejects steps that the graph does not connect and can report no journey", async () => {
-    const generate = scripted([
+    const model = new FakeChatModel([
       final([
         step(idOf("RegisterForm"), "Form."),
         step(idOf("loadSession"), "Unrelated session loader."),
@@ -619,9 +623,9 @@ describe("AI-guided journey agent", () => {
       question: "How does checkout work?",
       files,
       graph,
-      generate,
+      model,
     });
-    expect(generate.calls).toBe(2);
+    expect(model.calls).toBe(2);
     expect(journey.mode).toBe("ai");
     expect(journey.nodeIds).toEqual([]);
     expect(journey.uncertainties[0]).toContain(
@@ -629,41 +633,48 @@ describe("AI-guided journey agent", () => {
     );
   });
   it("stops the exploration at the tool budget", async () => {
-    const generate = scripted(
-      Array.from({ length: 10 }, (_, index) => ({
-        kind: "tools" as const,
-        toolCalls: [
-          {
-            id: `t${index}`,
-            name: "search_code",
-            arguments: '{"query":"register"}',
-          },
-        ],
-      })),
+    const model = new FakeChatModel(
+      Array.from({ length: 10 }, (_, index) =>
+        toolsTurn(`t${index}`, "search_code", '{"query":"register"}'),
+      ),
     );
     const journey = await runJourneyAgent({
       question: "How does registration work?",
       files,
       graph,
-      generate,
+      model,
     });
-    expect(generate.calls).toBe(6);
+    expect(model.calls).toBe(6);
     expect(journey.mode).toBe("ai");
     expect(journey.nodeIds).toEqual([]);
     expect(journey.uncertainties[0]).toContain("without a validated path");
   });
   it("reports a provider that fails instead of showing a static path", async () => {
-    const generate = async () => {
-      throw new Error("boom");
-    };
     const journey = await runJourneyAgent({
       question: "How does registration work?",
       files,
       graph,
-      generate,
+      model: new FakeChatModel([{ error: new Error("boom") }]),
     });
     expect(journey.mode).toBe("ai");
     expect(journey.nodeIds).toEqual([]);
     expect(journey.uncertainties[0]).toContain("AI provider");
+  });
+  it("opens every exploration with the system instructions and the question", async () => {
+    const model = new FakeChatModel([final([], ["Nothing found."])]);
+    await runJourneyAgent({
+      question: "How does login work?",
+      files,
+      graph,
+      model,
+    });
+    expect(model.seen[0][0]).toBeInstanceOf(SystemMessage);
+    expect(String((model.seen[0][0] as SystemMessage).content)).toContain(
+      "discover_feature",
+    );
+    expect(model.seen[0][1]).toBeInstanceOf(HumanMessage);
+    expect(String((model.seen[0][1] as HumanMessage).content)).toBe(
+      "How does login work?",
+    );
   });
 });

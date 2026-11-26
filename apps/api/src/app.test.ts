@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createApp } from "./app";
-import { createJourneyAgentGenerate } from "./providers/journey-agent";
+import { createChatModel } from "./orchestration/chat-model";
 import { runAnalysis } from "./analyzer/run-analysis";
 vi.mock("./analyzer/run-analysis", () => ({
   AnalysisError: class extends Error {},
@@ -54,10 +54,13 @@ vi.mock("./providers/generate-answer", () => ({
     uncertainties: [],
   })),
 }));
-vi.mock("./providers/journey-agent", () => ({
-  createJourneyAgentGenerate: vi.fn(async () => async () => ({
-    kind: "final" as const,
-    text: '{"steps":[{"nodeId":"a.ts#0","text":"x"}],"uncertainties":[]}',
+vi.mock("./orchestration/chat-model", () => ({
+  createChatModel: vi.fn(() => ({
+    // The integration fails immediately, so the journey must come back as
+    // the honest provider-failure result instead of a static path.
+    bindTools: () => {
+      throw new Error("simulated provider outage");
+    },
   })),
 }));
 let app: FastifyInstance;
@@ -591,7 +594,7 @@ describe("journey HTTP boundary", () => {
         payload,
       });
       expect(invalid.statusCode).toBe(400);
-      expect(createJourneyAgentGenerate).not.toHaveBeenCalled();
+      expect(createChatModel).not.toHaveBeenCalled();
       const valid = await isolated.inject({
         method: "POST",
         url: "/api/journeys",
@@ -599,7 +602,7 @@ describe("journey HTTP boundary", () => {
         payload: { ...payload, ai: { ...payload.ai, providerConsent: true } },
       });
       expect(valid.statusCode).toBe(200);
-      expect(createJourneyAgentGenerate).toHaveBeenCalledOnce();
+      expect(createChatModel).toHaveBeenCalledOnce();
       expect(valid.json().mode).toBe("ai");
       expect(valid.json().nodeIds).toEqual([]);
       expect(valid.json().uncertainties[0].toLowerCase()).toContain("model");

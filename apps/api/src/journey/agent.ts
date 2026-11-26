@@ -5,13 +5,8 @@ import {
   type CodeGraph,
   type Journey,
 } from "@z1n/contracts";
-import { createJourneyTools } from "./tools";
 import { journeyKinds } from "./journey-kinds";
-import {
-  completePersistenceEvidence,
-  qualifyUnsupportedAbsence,
-} from "./complete-evidence";
-import { groundExplanations } from "./claims";
+import { qualifyUnsupportedAbsence } from "./complete-evidence";
 
 export type AgentMessage =
   | { role: "user"; text: string }
@@ -28,18 +23,14 @@ export type AgentTurn =
 export type AgentGenerate = (input: {
   system: string;
   messages: AgentMessage[];
-  tools: ReturnType<typeof createJourneyTools>["definitions"];
+  tools: unknown[];
   signal?: AbortSignal;
 }) => Promise<AgentTurn>;
 
 // Slower exploring models spend rounds reading before they answer; the
 // budget stays hard, and the system instructions tell the model to close.
-const MAX_ROUNDS = 6;
-const MAX_TOOL_CALLS = 18;
-const MAX_STEPS = 12;
 const MAX_MODEL_UNCERTAINTIES = 4;
-const TIMEOUT_MS = 30_000;
-const TOTAL_TIMEOUT_MS = 180_000;
+const MAX_STEPS = 12;
 const JSON_FENCE = /^\s*```(?:json)?\s*/i;
 
 export const JOURNEY_SYSTEM_INSTRUCTIONS =
@@ -61,7 +52,7 @@ export const JOURNEY_SYSTEM_INSTRUCTIONS =
   "After exploring, reply with JSON only and no tool calls: " +
   '{"steps":[{"nodeId":"<reference from tools>","text":"<why this step belongs to the feature>"}],"relatedOperations":[{"ownerId":"<path reference>","nodeId":"<database reference>"}],"uncertainties":["<limits such as unmatched boundaries or heuristic transitions>"]}. ' +
   "Order steps from the entry point to the result and use at most 12 steps. Keep each explanation under 600 characters and each uncertainty under 500 characters.";
-const draftSchema = z
+export const draftSchema = z
   .object({
     steps: z
       .array(
@@ -88,7 +79,7 @@ const draftSchema = z
   })
   .strict();
 
-function parseDraft(
+export function parseDraft(
   text: string,
 ): { draft: z.infer<typeof draftSchema> } | { error: string } {
   const body = text.replace(JSON_FENCE, "").replace(/\s*```\s*$/, "");
@@ -115,8 +106,8 @@ function parseDraft(
   }
 }
 
-type Built = { journey: Journey } | { error: string };
-function buildJourney(
+export type Built = { journey: Journey } | { error: string };
+export function buildJourney(
   draft: z.infer<typeof draftSchema>,
   graph: CodeGraph,
   resolveReference: (ref: string) => string | undefined,
@@ -204,201 +195,4 @@ function buildJourney(
   if (!journeyIsValid(candidate, graph))
     return { error: "The proposed path did not match the graph." };
   return { journey: candidate };
-}
-
-export type JourneyAgentInput = {
-  question: string;
-  files: { path: string; content: string }[];
-  graph: CodeGraph;
-  generate: AgentGenerate;
-  signal?: AbortSignal;
-  maxRounds?: number;
-  maxToolCalls?: number;
-};
-
-/**
- * Runs the bounded tool-calling loop that lets the model explore the
- * selection and propose a feature path. The model chooses what to inspect;
- * every identifier it cites is validated against the graph here, and the
- * edges of the returned journey always come from the graph itself.
- */
-export async function runJourneyAgent(
-  input: JourneyAgentInput,
-): Promise<Journey> {
-  const { question, files, graph, generate, signal } = input;
-  let partial: Journey | undefined;
-  const unknown = (message: string): Journey =>
-    partial
-      ? {
-          ...partial,
-          uncertainties: [
-            ...partial.uncertainties.slice(0, 6),
-            "This is a partial path; later proposed steps could not be validated.",
-            message,
-          ],
-        }
-      : { mode: "ai", nodeIds: [], edgeIds: [], uncertainties: [message] };
-  const tools = createJourneyTools(files, graph);
-  const totalTimeout = AbortSignal.timeout(TOTAL_TIMEOUT_MS);
-  const messages: AgentMessage[] = [{ role: "user", text: question }];
-  let toolCalls = 0;
-  let corrective = 0;
-  const priorCalls = new Set<string>();
-  const maxRounds = Math.max(
-    1,
-    Math.min(20, Math.trunc(input.maxRounds ?? MAX_ROUNDS) || MAX_ROUNDS),
-  );
-  const maxToolCalls = Math.max(
-    1,
-    Math.min(
-      60,
-      Math.trunc(input.maxToolCalls ?? MAX_TOOL_CALLS) || MAX_TOOL_CALLS,
-    ),
-  );
-  for (let round = 0; round < maxRounds; round++) {
-    let turn: AgentTurn;
-    try {
-      turn = await generate({
-        system: JOURNEY_SYSTEM_INSTRUCTIONS,
-        messages,
-        tools: tools.definitions,
-        signal: AbortSignal.any([
-          ...(signal ? [signal] : []),
-          totalTimeout,
-          AbortSignal.timeout(TIMEOUT_MS),
-        ]),
-      });
-    } catch {
-      return unknown(
-        "The AI provider could not complete the exploration. Check the provider and model in Settings.",
-      );
-    }
-    if (turn.kind === "tools") {
-      const calls = turn.toolCalls.slice(0, maxToolCalls - toolCalls);
-      toolCalls += calls.length;
-      messages.push({
-        role: "assistant",
-        toolCalls: calls.map(({ id, name, arguments: args }) => ({
-          id,
-          name,
-          arguments: args,
-        })),
-      });
-      for (const call of calls) {
-        let key = `${call.name}:${call.arguments}`;
-        try {
-          const args: unknown = JSON.parse(call.arguments || "{}");
-          if (args && typeof args === "object" && !Array.isArray(args))
-            key = `${call.name}:${JSON.stringify(Object.entries(args).sort(([a], [b]) => a.localeCompare(b)))}`;
-        } catch {
-          // Invalid arguments are reported by the tool itself.
-        }
-        const repeated = priorCalls.has(key);
-        priorCalls.add(key);
-        const result = repeated
-          ? {
-              name: call.name,
-              output: JSON.stringify({
-                notice:
-                  "This tool call was already answered; use the earlier result.",
-              }),
-            }
-          : tools.execute(call);
-        messages.push({
-          role: "tool",
-          toolCallId: call.id,
-          name: result.name,
-          content: result.output,
-        });
-      }
-      if (toolCalls >= maxToolCalls) {
-        messages.push({
-          role: "user",
-          text: "The tool budget is used up. Answer now with the final JSON and no tool calls.",
-        });
-      }
-      continue;
-    }
-    const parsed = parseDraft(turn.text);
-    if ("error" in parsed) {
-      if (corrective++ >= 2) {
-        return unknown(
-          "The model did not return the expected JSON answer about this feature.",
-        );
-      }
-      messages.push({ role: "assistant", text: turn.text });
-      messages.push({
-        role: "user",
-        text: `${parsed.error} Reply with JSON only: {"steps":[{"nodeId":"...","text":"..."}],"relatedOperations":[{"ownerId":"...","nodeId":"..."}],"uncertainties":["..."]}. Keep each step under 600 characters and each uncertainty under 500.`,
-      });
-      continue;
-    }
-    const built = buildJourney(parsed.draft, graph, tools.resolveReference);
-    if ("error" in built) {
-      for (let size = parsed.draft.steps.length; size > 0; size--) {
-        const prefix = buildJourney(
-          {
-            ...parsed.draft,
-            steps: parsed.draft.steps.slice(0, size),
-            relatedOperations: [],
-          },
-          graph,
-          tools.resolveReference,
-        );
-        if ("journey" in prefix) {
-          if (
-            prefix.journey.edgeIds.some(
-              (id) =>
-                graph.edges.find((edge) => edge.id === id)?.confidence ===
-                "heuristic",
-            )
-          )
-            prefix.journey.uncertainties.push(
-              "This partial path contains a heuristic relationship and is not a verified runtime trace.",
-            );
-          if (
-            !partial ||
-            prefix.journey.nodeIds.length > partial.nodeIds.length
-          )
-            partial = prefix.journey;
-          break;
-        }
-      }
-      if (corrective++ >= 2) {
-        return unknown(`Invalid journey: ${built.error.slice(0, 400)}`);
-      }
-      messages.push({ role: "assistant", text: turn.text });
-      messages.push({
-        role: "user",
-        text: `Your answer was rejected: ${built.error}`,
-      });
-      continue;
-    }
-    const { journey } = built;
-    const heuristic = journey.edgeIds.filter((id) => {
-      const edge = graph.edges.find((item) => item.id === id);
-      return edge?.confidence === "heuristic";
-    }).length;
-    if (heuristic)
-      journey.uncertainties.push(
-        `${heuristic} transition${heuristic > 1 ? "s are" : " is"} heuristic: the request and the backend route are a possible match, not a verified call.`,
-      );
-    if (!journey.edgeIds.length && journey.nodeIds.length)
-      journey.uncertainties.push(
-        "No supported transition was found for this matching symbol.",
-      );
-    const completed = completePersistenceEvidence(journey, graph, question);
-    if (!journeyIsValid(completed, graph))
-      return unknown("The additional evidence could not be validated.");
-    const grounded = groundExplanations(completed, graph, files);
-    if (!journeyIsValid(grounded, graph, files))
-      return unknown("The explanation evidence could not be verified.");
-    return journeySchema.parse({
-      ...grounded,
-      uncertainties: grounded.uncertainties.slice(0, 8),
-    });
-  }
-  return unknown(
-    "The exploration ended without a validated path. Try a more specific question or the static exploration mode.",
-  );
 }

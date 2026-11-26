@@ -7,6 +7,7 @@ async function main() {
   // server with a message that names the offending variable.
   loadBackendDotenv();
   developerAiConfig();
+  disableLlmTracing();
   const port = Number(process.env.PORT ?? "4000");
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error("Invalid API port.");
@@ -30,3 +31,21 @@ main().catch((error) => {
   );
   process.exitCode = 1;
 });
+
+/**
+ * Prompts, source excerpts and credentials must never leave this process
+ * through a tracing side channel. The LangChain tracing integrations are
+ * off unless these environment variables turn them on, so the server pins
+ * them off regardless of the surrounding shell.
+ */
+function disableLlmTracing(): void {
+  for (const toggle of ["LANGCHAIN_TRACING_V2", "LANGSMITH_TRACING"])
+    process.env[toggle] = "false";
+  for (const variable of [
+    "LANGCHAIN_ENDPOINT",
+    "LANGSMITH_ENDPOINT",
+    "LANGSMITH_PROJECT",
+    "LANGSMITH_API_KEY",
+  ])
+    delete process.env[variable];
+}
