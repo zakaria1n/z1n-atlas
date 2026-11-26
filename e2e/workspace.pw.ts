@@ -116,8 +116,30 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
           "Mocked answer: a selected path is never a verified runtime trace.",
         ],
         explanations: [
-          { nodeId: form.id, text: "The form the user submits." },
-          { nodeId: callee.id, text: "Sends the request." },
+          {
+            nodeId: form.id,
+            text: "The form the user submits.",
+            support: {
+              level: "source",
+              sourceRefs: [
+                {
+                  path: form.path,
+                  startLine: 1,
+                  endLine: 1,
+                  fragment: "form",
+                },
+              ],
+            },
+          },
+          {
+            nodeId: callee.id,
+            text: "Sends the request, verified at runtime as a confirmed call.",
+            support: {
+              level: "relationship",
+              edgeIds: [link.id],
+              note: "Static analysis only; the call edge is not a runtime trace.",
+            },
+          },
         ],
       },
     });
@@ -168,6 +190,29 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   await expect(page.getByLabel("Graph scope")).toHaveValue("journey");
   await expect(page.getByText("AI-guided journey")).toBeVisible();
   await expect(page.getByText("The form the user submits.")).toBeVisible();
+  // Claim-level support: the source-backed explanation shows a badge and a
+  // verified citation; the relationship-backed one shows its limitation.
+  await expect(
+    page.locator(".support-badge.support-source", {
+      hasText: "source-backed",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".support-badge.support-relationship"),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "Static analysis only; the call edge is not a runtime trace.",
+    ),
+  ).toBeVisible();
+  await page
+    .getByLabel("Verified code citations")
+    .getByRole("button", { name: /src\/ui\.tsx:1/ })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Code inspector" }),
+  ).toContainText("src/ui.tsx");
+  await page.keyboard.press("Escape");
   await expect(page.locator(".journey-steps > li")).toHaveCount(2);
   await page.unroute("**/api/journeys");
   await page.route("**/api/journeys", async (route) => {

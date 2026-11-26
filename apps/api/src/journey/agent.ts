@@ -11,6 +11,7 @@ import {
   completePersistenceEvidence,
   qualifyUnsupportedAbsence,
 } from "./complete-evidence";
+import { groundExplanations } from "./claims";
 
 export type AgentMessage =
   | { role: "user"; text: string }
@@ -47,6 +48,8 @@ export const JOURNEY_SYSTEM_INSTRUCTIONS =
   "get_graph_neighbors lists the verified relationships of a node with the identifiers to cite, " +
   "find_routes lists HTTP routes and their handlers. " +
   "Ground every step in tool results: cite only node identifiers that a tool returned, and never invent identifiers, files, lines or relationships. " +
+  "In each explanation, quote the exact code fragments you read (in backticks), such as a called function or a field: the backend verifies those fragments against the analyzed files and labels every explanation with the support it could verify. " +
+  "Never write confirmed, proven or guaranteed: state what the static evidence shows. " +
   "Distinguish code facts, static inferences and heuristics. A search with no matches does not prove a feature is absent; state only what was searched and remains unknown. " +
   "Follow supported relationships only: calls, requests, http-route, handles, handles-event, database-access, renders. " +
   "A path explains a feature from its user-facing entry, such as a component or event handler, through requests, routes, handlers and services, to data access when the code supports it. " +
@@ -387,9 +390,12 @@ export async function runJourneyAgent(
     const completed = completePersistenceEvidence(journey, graph, question);
     if (!journeyIsValid(completed, graph))
       return unknown("The additional evidence could not be validated.");
+    const grounded = groundExplanations(completed, graph, files);
+    if (!journeyIsValid(grounded, graph, files))
+      return unknown("The explanation evidence could not be verified.");
     return journeySchema.parse({
-      ...completed,
-      uncertainties: completed.uncertainties.slice(0, 8),
+      ...grounded,
+      uncertainties: grounded.uncertainties.slice(0, 8),
     });
   }
   return unknown(

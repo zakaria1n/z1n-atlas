@@ -94,6 +94,28 @@ export function JourneyPanel({
   }
   const explanation = (id: string) =>
     journey?.explanations?.find((item) => item.nodeId === id)?.text;
+  const supportOf = (id: string) =>
+    journey?.explanations?.find((item) => item.nodeId === id)?.support;
+  const supportLabel: Record<string, { badge: string; title: string }> = {
+    source: {
+      badge: "source-backed",
+      title: "The quoted code was found verbatim in the analyzed file.",
+    },
+    relationship: {
+      badge: "relationship-backed",
+      title: "A verified graph relationship supports this statement.",
+    },
+    heuristic: {
+      badge: "heuristic match",
+      title:
+        "The supporting transition is a heuristic URL and method match, not a verified call.",
+    },
+    inference: {
+      badge: "model interpretation",
+      title:
+        "No cited code or verified relationship backs this statement; treat it as the model's interpretation.",
+    },
+  };
   return (
     <details className="journey-panel">
       <summary>Feature Journey</summary>
@@ -251,6 +273,52 @@ export function JourneyPanel({
                     </button>
                     <span> · {node.kind ?? "file"}</span>
                     {text && <p className="journey-explanation">{text}</p>}
+                    {(() => {
+                      const support = supportOf(id);
+                      if (!support) return null;
+                      const label = supportLabel[support.level];
+                      return (
+                        <div className="journey-support">
+                          <span
+                            className={`support-badge support-${support.level}`}
+                            title={label?.title}
+                          >
+                            {label?.badge ?? support.level}
+                          </span>
+                          {support.note && (
+                            <p className="support-note">{support.note}</p>
+                          )}
+                          {(support.sourceRefs ?? []).length > 0 && (
+                            <ul aria-label="Verified code citations">
+                              {(support.sourceRefs ?? []).map((reference) => (
+                                <li
+                                  key={`${reference.path}:${reference.startLine}`}
+                                >
+                                  <button
+                                    type="button"
+                                    className="text-link citation-button"
+                                    onClick={() =>
+                                      onOpenFile(
+                                        reference.path,
+                                        reference.startLine,
+                                      )
+                                    }
+                                  >
+                                    {reference.path}:{reference.startLine}
+                                    {reference.endLine !==
+                                      reference.startLine &&
+                                      `–${reference.endLine}`}
+                                  </button>
+                                  <code className="support-fragment">
+                                    {reference.fragment}
+                                  </code>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {(journey.relatedOperations ?? []).some(
                       (item) => item.ownerId === id,
                     ) && (

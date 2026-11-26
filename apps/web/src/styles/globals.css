@@ -683,6 +683,48 @@ button:disabled {
   color: #334155;
   margin: 0.2rem 0;
 }
+.journey-support {
+  margin: 0.2rem 0;
+}
+.support-badge {
+  border-radius: 0.4rem;
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+}
+.support-source {
+  background: #d9f4ec;
+  color: #0d664c;
+}
+.support-relationship {
+  background: #e4ecff;
+  color: #174eb5;
+}
+.support-heuristic {
+  background: #fef3c7;
+  color: #8a5a09;
+}
+.support-inference {
+  background: #f1f3f5;
+  color: #475569;
+}
+.support-note {
+  color: #7c5a0a;
+  font-size: 0.78rem;
+  margin: 0.25rem 0;
+}
+.support-fragment {
+  color: #334155;
+  font-family: monospace;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.journey-support ul {
+  list-style: none;
+  margin: 0.25rem 0;
+  padding-left: 0;
+}
 .relations {
   list-style: none;
   padding: 0;

@@ -47,6 +47,45 @@ export const journeyRequestSchema = z
   });
 export const journeyModeSchema = z.enum(["ai", "static"]);
 export type JourneyMode = z.infer<typeof journeyModeSchema>;
+/**
+ * How strongly the backend could support an explanation, in decreasing
+ * order. `source` means the explanation cites code fragments the backend
+ * found verbatim in the analyzed file; `relationship` means a verified
+ * graph edge backs it; `heuristic` means the backing edge is itself a
+ * heuristic match; `inference` means nothing mechanical supports the
+ * statement and it must be read as the model's interpretation.
+ */
+export const supportLevelSchema = z.enum([
+  "source",
+  "relationship",
+  "heuristic",
+  "inference",
+]);
+export type SupportLevel = z.infer<typeof supportLevelSchema>;
+export const explanationSupportSchema = z
+  .object({
+    level: supportLevelSchema,
+    /** Analyzed-file ranges whose text contains the cited fragment verbatim. */
+    sourceRefs: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1).max(500),
+            startLine: z.number().int().min(1),
+            endLine: z.number().int().min(1),
+            fragment: z.string().min(1).max(120),
+          })
+          .strict(),
+      )
+      .max(3)
+      .optional(),
+    /** Verified graph edges that back the statement. */
+    edgeIds: z.array(z.string().min(1).max(2000)).max(3).optional(),
+    /** Generated limitation, e.g. a heuristic match or conditional rollback. */
+    note: z.string().min(1).max(300).optional(),
+  })
+  .strict();
+export type ExplanationSupport = z.infer<typeof explanationSupportSchema>;
 export const journeySchema = z
   .object({
     mode: journeyModeSchema,
@@ -72,6 +111,8 @@ export const journeySchema = z
           .object({
             nodeId: z.string().min(1).max(1000),
             text: z.string().min(1).max(600),
+            /** Backend-verified support classification of this explanation. */
+            support: explanationSupportSchema.optional(),
           })
           .strict(),
       )
@@ -81,7 +122,20 @@ export const journeySchema = z
   .strict();
 export type Journey = z.infer<typeof journeySchema>;
 export type JourneyRequest = z.infer<typeof journeyRequestSchema>;
-export function journeyIsValid(journey: Journey, graph: CodeGraph): boolean {
+const relationshipKinds = new Set([
+  "calls",
+  "requests",
+  "http-route",
+  "handles",
+  "handles-event",
+  "database-access",
+  "renders",
+]);
+export function journeyIsValid(
+  journey: Journey,
+  graph: CodeGraph,
+  files?: { path: string; content: string }[],
+): boolean {
   const nodes = new Set(graph.nodes.map((node) => node.id));
   const edges = new Map(graph.edges.map((edge) => [edge.id, edge]));
   const evidence = new Set(graph.evidence.map((item) => item.id));
@@ -106,13 +160,61 @@ export function journeyIsValid(journey: Journey, graph: CodeGraph): boolean {
     })
   )
     return false;
+  const fileLines = new Map(
+    (files ?? []).map((file) => [file.path, file.content.split(/\r\n|\r|\n/)]),
+  );
   if (
-    !(journey.explanations ?? []).every(
-      (explanation) =>
-        journey.nodeIds.includes(explanation.nodeId) &&
+    !(journey.explanations ?? []).every((explanation) => {
+      if (
+        !journey.nodeIds.includes(explanation.nodeId) ||
         new Set((journey.explanations ?? []).map((item) => item.nodeId))
-          .size === (journey.explanations ?? []).length,
-    )
+          .size !== (journey.explanations ?? []).length
+      )
+        return false;
+      const support = explanation.support;
+      if (!support) return true;
+      // A claimed strength must match what actually backs the statement.
+      if (support.level === "source" && !support.sourceRefs?.length)
+        return false;
+      if (
+        (support.level === "relationship" || support.level === "heuristic") &&
+        !support.edgeIds?.length
+      )
+        return false;
+      if (
+        support.level === "heuristic" &&
+        !support.edgeIds?.every(
+          (id) => edges.get(id)?.confidence === "heuristic",
+        )
+      )
+        return false;
+      if (
+        support.edgeIds &&
+        !support.edgeIds.every((id) => {
+          const edge = edges.get(id);
+          return (
+            edge &&
+            relationshipKinds.has(edge.kind) &&
+            (edge.source === explanation.nodeId ||
+              edge.target === explanation.nodeId)
+          );
+        })
+      )
+        return false;
+      return (support.sourceRefs ?? []).every((reference) => {
+        const fileLine = fileLines.get(reference.path);
+        const inGraph =
+          nodes.has(reference.path) ||
+          graph.nodes.some((node) => node.path === reference.path);
+        if (!inGraph || reference.endLine < reference.startLine) return false;
+        if (!fileLine) return true;
+        if (reference.endLine > fileLine.length) return false;
+        return fileLine
+          .slice(reference.startLine - 1, reference.endLine)
+          .join("\n")
+          .includes(reference.fragment);
+      });
+    })
   )
     return false;
   if (!journey.nodeIds.length) return journey.edgeIds.length === 0;

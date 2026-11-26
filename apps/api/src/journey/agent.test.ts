@@ -506,7 +506,16 @@ describe("AI-guided journey agent", () => {
     expect(journey.explanations?.[0]).toEqual({
       nodeId: idOf("RegisterForm"),
       text: "The registration form.",
+      // Every explanation gains a backend-computed support classification;
+      // this step's first transition is the framework handles-event edge.
+      support: {
+        level: "relationship",
+        edgeIds: [journey.edgeIds[0]],
+      },
     });
+    expect(
+      journey.explanations?.every((explanation) => explanation.support),
+    ).toBe(true);
     expect(
       journey.uncertainties.some((note) => note.includes("heuristic")),
     ).toBe(true);
