@@ -177,6 +177,21 @@ describe("Python analysis", () => {
     ).toBe(false);
   }, 30_000);
 
+  it("keeps the graph valid when a session operation resolves no model", async () => {
+    const files = [
+      {
+        path: "backend/app/store.py",
+        content:
+          "from sqlalchemy.orm import Session\n\ndef load(db: Session):\n    return db.scalar(mystery())\n",
+      },
+      { path: "backend/app/__init__.py", content: "" },
+      { path: "backend/__init__.py", content: "" },
+    ];
+    const graph = await analyzeFiles(files);
+    expect(graphIsValid(graph, files)).toBe(true);
+    expect(graph.nodes.filter((node) => node.kind === "database")).toEqual([]);
+  }, 30_000);
+
   it("reports a relative import that leaves the project instead of guessing", async () => {
     const graph = await analyzeFiles([
       {

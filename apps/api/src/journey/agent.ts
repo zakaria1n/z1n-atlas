@@ -27,8 +27,10 @@ export type AgentGenerate = (input: {
   signal?: AbortSignal;
 }) => Promise<AgentTurn>;
 
-const MAX_ROUNDS = 4;
-const MAX_TOOL_CALLS = 12;
+// Slower exploring models spend rounds reading before they answer; the
+// budget stays hard, and the system instructions tell the model to close.
+const MAX_ROUNDS = 6;
+const MAX_TOOL_CALLS = 18;
 const MAX_STEPS = 12;
 const MAX_MODEL_UNCERTAINTIES = 4;
 const TIMEOUT_MS = 8_000;
@@ -44,6 +46,7 @@ export const JOURNEY_SYSTEM_INSTRUCTIONS =
   "A path explains a feature from its user-facing entry, such as a component or event handler, through requests, routes, handlers and services, to data access when the code supports it. " +
   "Stop where the analyzed evidence stops: if a request has no matching backend route, end the path there and say so in uncertainties. " +
   "If the tools cannot find the feature, return an empty steps array and explain what is missing. " +
+  "The exploration has a fixed budget of six turns: after two or three tool rounds, stop calling tools and give the final answer with the best evidence you have. " +
   "After exploring, reply with JSON only and no tool calls: " +
   '{"steps":[{"nodeId":"<identifier from tools>","text":"<why this step belongs to the feature>"}],"uncertainties":["<limits such as unmatched boundaries or heuristic transitions>"]}. ' +
   "Order steps from the entry point to the result and use at most 12 steps.";

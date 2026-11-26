@@ -627,16 +627,19 @@ function extractDatabaseAccess(analysis: Analysis): void {
       );
       if (!sessionNames.has(receiver) && !annotated) continue;
       const id = `${path}#database:${call.start}`;
-      const evidenceId = evidence(
-        analysis,
-        path,
-        call.start,
-        call.end,
-        `${id}:evidence`,
-      );
+      // Evidence is recorded only when a relationship is actually created:
+      // an operation whose model stays unknown contributes nothing, and a
+      // dangling evidence item would invalidate the graph.
       // A transaction boundary changes no row by itself, so it names only the
       // operation and never claims a model or a successful outcome.
       if (isTransaction) {
+        const evidenceId = evidence(
+          analysis,
+          path,
+          call.start,
+          call.end,
+          `${id}:evidence`,
+        );
         analysis.graph.nodes.push({
           id,
           path,
@@ -661,6 +664,13 @@ function extractDatabaseAccess(analysis: Analysis): void {
       const modelClass =
         file.classes.get(model) ?? importedClass(analysis, file, model);
       if (!modelClass) continue;
+      const evidenceId = evidence(
+        analysis,
+        path,
+        call.start,
+        call.end,
+        `${id}:evidence`,
+      );
       analysis.graph.nodes.push({
         id,
         path,

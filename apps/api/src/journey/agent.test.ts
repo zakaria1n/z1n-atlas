@@ -269,7 +269,7 @@ describe("AI-guided journey agent", () => {
       graph,
       generate,
     });
-    expect(generate.calls).toBe(4);
+    expect(generate.calls).toBe(6);
     expect(journey.mode).toBe("ai");
     expect(journey.nodeIds).toEqual([]);
     expect(journey.uncertainties[0]).toContain("without a validated path");
