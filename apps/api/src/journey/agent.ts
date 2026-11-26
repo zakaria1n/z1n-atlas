@@ -7,6 +7,10 @@ import {
 } from "@z1n/contracts";
 import { createJourneyTools } from "./tools";
 import { journeyKinds } from "./journey-kinds";
+import {
+  completePersistenceEvidence,
+  qualifyUnsupportedAbsence,
+} from "./complete-evidence";
 
 export type AgentMessage =
   | { role: "user"; text: string }
@@ -43,6 +47,7 @@ export const JOURNEY_SYSTEM_INSTRUCTIONS =
   "get_graph_neighbors lists the verified relationships of a node with the identifiers to cite, " +
   "find_routes lists HTTP routes and their handlers. " +
   "Ground every step in tool results: cite only node identifiers that a tool returned, and never invent identifiers, files, lines or relationships. " +
+  "Distinguish code facts, static inferences and heuristics. A search with no matches does not prove a feature is absent; state only what was searched and remains unknown. " +
   "Follow supported relationships only: calls, requests, http-route, handles, handles-event, database-access, renders. " +
   "A path explains a feature from its user-facing entry, such as a component or event handler, through requests, routes, handlers and services, to data access when the code supports it. " +
   "Stop where the analyzed evidence stops: if a request has no matching backend route, end the path there and say so in uncertainties. " +
@@ -133,7 +138,7 @@ function buildJourney(
     if (nodeIds.includes(nodeId))
       return { error: `"${step.nodeId}" appears twice in the path.` };
     nodeIds.push(nodeId);
-    explanations.push({ nodeId, text: step.text });
+    explanations.push({ nodeId, text: qualifyUnsupportedAbsence(step.text) });
   }
   const edgeIds: string[] = [];
   const boundaries: string[] = [];
@@ -154,7 +159,7 @@ function buildJourney(
     };
   const uncertainties = [
     ...(draft.uncertainties
-      ?.map((text) => text.slice(0, 500))
+      ?.map((text) => qualifyUnsupportedAbsence(text).slice(0, 500))
       .slice(0, MAX_MODEL_UNCERTAINTIES) ?? []),
   ];
   if (!uncertainties.length)
@@ -371,9 +376,12 @@ export async function runJourneyAgent(
       journey.uncertainties.push(
         "No supported transition was found for this matching symbol.",
       );
+    const completed = completePersistenceEvidence(journey, graph, question);
+    if (!journeyIsValid(completed, graph))
+      return unknown("The additional evidence could not be validated.");
     return journeySchema.parse({
-      ...journey,
-      uncertainties: journey.uncertainties.slice(0, 8),
+      ...completed,
+      uncertainties: completed.uncertainties.slice(0, 8),
     });
   }
   return unknown(

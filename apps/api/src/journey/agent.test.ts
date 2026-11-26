@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { analyzeFiles } from "@z1n/analysis-core";
 import { runJourneyAgent, type AgentGenerate, type AgentTurn } from "./agent";
+import { completePersistenceEvidence } from "./complete-evidence";
 
 const fixtureDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -73,6 +74,85 @@ function scripted(
 }
 
 describe("AI-guided journey agent", () => {
+  it("does not choose between ambiguous writes without a selected operation", async () => {
+    const pythonFiles = loadFixture(
+      path.resolve(fixtureDir, "../fastapi-booking"),
+    );
+    const pythonGraph = await analyzeFiles(pythonFiles);
+    const owner = pythonGraph.nodes.find(
+      (node) => node.name === "create_booking" && node.kind === "function",
+    )!;
+    const write = pythonGraph.edges.find(
+      (edge) =>
+        edge.source === owner.id &&
+        pythonGraph.nodes.find((node) => node.id === edge.target)?.name ===
+          "SQLAlchemy write add Booking",
+    )!;
+    const original = pythonGraph.nodes.find(
+      (node) => node.id === write.target,
+    )!;
+    const graph = {
+      ...pythonGraph,
+      nodes: [
+        ...pythonGraph.nodes,
+        { ...original, id: "other-write", name: "SQLAlchemy write add Other" },
+      ],
+      edges: [
+        ...pythonGraph.edges,
+        { ...write, id: "other-edge", target: "other-write" },
+      ],
+    };
+    const result = completePersistenceEvidence(
+      {
+        mode: "ai",
+        nodeIds: [owner.id],
+        edgeIds: [],
+        uncertainties: ["Static analysis."],
+      },
+      graph,
+      "Save booking in database",
+    );
+    expect(result.relatedOperations ?? []).toEqual([]);
+  });
+  it("recovers transaction evidence for an identified Python write without treating rollback as executed", async () => {
+    const pythonFiles = loadFixture(
+      path.resolve(fixtureDir, "../fastapi-booking"),
+    );
+    const pythonGraph = await analyzeFiles(pythonFiles);
+    const owner = pythonGraph.nodes.find(
+      (node) => node.name === "create_booking" && node.kind === "function",
+    )!;
+    const generate = scripted([
+      final(
+        [step(owner.id, "Creates a booking.")],
+        ["No push mechanism exists in this repository."],
+      ),
+    ]);
+    const journey = await runJourneyAgent({
+      question: "Where is the booking committed to the database?",
+      files: pythonFiles,
+      graph: pythonGraph,
+      generate,
+    });
+    const names = (journey.relatedOperations ?? []).map(
+      (item) => pythonGraph.nodes.find((node) => node.id === item.nodeId)?.name,
+    );
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "SQLAlchemy write add Booking",
+        "SQLAlchemy flush",
+        "SQLAlchemy rollback",
+        "SQLAlchemy commit",
+      ]),
+    );
+    expect(journey.uncertainties.join(" ")).toContain(
+      "rollback may be conditional",
+    );
+    expect(journey.uncertainties.join(" ")).not.toContain(
+      "No push mechanism exists",
+    );
+    expect(journey.edgeIds).toEqual([]);
+  });
   it("retains a validated prefix when later proposed transitions remain invalid", async () => {
     const invalid = final([
       step(idOf("RegisterForm"), "Registration begins here."),

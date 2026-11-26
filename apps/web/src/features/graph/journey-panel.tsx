@@ -101,6 +101,10 @@ export function JourneyPanel({
         Explain how a feature runs through the analyzed code. Every step cites
         source evidence; nothing is shown that the graph does not contain.
       </p>
+      <p>
+        Graph links are checked against source evidence. AI explanations can
+        contain unverified claims; inspect the cited code.
+      </p>
       <form onSubmit={submit}>
         <label htmlFor="journey-goal">Feature or question</label>
         <input

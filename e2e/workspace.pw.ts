@@ -169,6 +169,51 @@ test("imports local source, analyzes a real graph, follows a journey and opens a
   await expect(page.getByText("AI-guided journey")).toBeVisible();
   await expect(page.getByText("The form the user submits.")).toBeVisible();
   await expect(page.locator(".journey-steps > li")).toHaveCount(2);
+  await page.unroute("**/api/journeys");
+  await page.route("**/api/journeys", async (route) => {
+    const payload = route.request().postDataJSON() as { ai?: unknown };
+    if (!payload.ai) return route.continue();
+    const owner = analysis.graph!.nodes.find((node) => node.name === "insert")!;
+    const operation = analysis.graph!.edges.find(
+      (edge) => edge.source === owner.id && edge.kind === "database-access",
+    )!;
+    return route.fulfill({
+      status: 200,
+      headers: cors,
+      json: {
+        mode: "ai",
+        nodeIds: [owner.id],
+        edgeIds: [],
+        relatedOperations: [
+          { ownerId: owner.id, nodeId: operation.target, edgeId: operation.id },
+        ],
+        uncertainties: ["Partial path: execution is not established."],
+        explanations: [
+          {
+            nodeId: owner.id,
+            text: "The repository contains a database operation.",
+          },
+        ],
+      },
+    });
+  });
+  await page.getByRole("button", { name: "Find path" }).click();
+  const related = page.getByRole("region", {
+    name: "Related database operations",
+  });
+  await expect(related).toBeVisible();
+  await expect(
+    page.getByText("Partial path: execution is not established."),
+  ).toBeVisible();
+  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  await related.getByRole("button").first().click();
+  await expect(
+    page.getByRole("dialog", { name: "Code inspector" }),
+  ).toContainText("src/repo.ts");
+  await page
+    .getByRole("dialog", { name: "Code inspector" })
+    .getByRole("button", { name: /close/i })
+    .click();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
