@@ -212,27 +212,31 @@ describe.skipIf(!enabled)("live LLM integration (opt-in)", () => {
             provider,
             async () => {
               const model = await modelFor(provider);
-              return runJourneyAgent({
+              const generate = createJourneyAgentGenerate(
+                { provider, apiKey, model },
+                fetch,
+              );
+              let providerFailure: unknown;
+              const result = await runJourneyAgent({
                 question:
                   "How does the web client create a booking, and where is it saved in the database?",
                 files: fixtureFiles,
                 graph: fixtureGraph!,
-                generate: createJourneyAgentGenerate(
-                  { provider, apiKey, model },
-                  fetch,
-                ),
+                generate: async (input) => {
+                  try {
+                    return await generate(input);
+                  } catch (error) {
+                    providerFailure = error;
+                    throw error;
+                  }
+                },
               });
+              if (providerFailure) throw providerFailure;
+              return result;
             },
             () => ctx.skip(),
           );
           console.info("journey uncertainties:", journey.uncertainties);
-          // A provider outage is an account state, not a product failure:
-          // the agent reports it honestly and the run skips.
-          if (
-            !journey.nodeIds.length &&
-            journey.uncertainties[0]?.includes("could not complete")
-          )
-            ctx.skip();
           expect(journey.mode).toBe("ai");
           expect(journey.nodeIds.length).toBeGreaterThan(1);
           const nodes = journey.nodeIds.map((id) =>

@@ -73,6 +73,21 @@ function scripted(
 }
 
 describe("AI-guided journey agent", () => {
+  it("requests a correction when the model returns malformed JSON", async () => {
+    const generate = scripted([
+      { kind: "final", text: '{"steps": [}' },
+      final([], ["The feature could not be established."]),
+    ]);
+    const journey = await runJourneyAgent({
+      question: "How does an unknown feature work?",
+      files,
+      graph,
+      generate,
+    });
+    expect(generate.calls).toBe(2);
+    expect(journey.nodeIds).toEqual([]);
+    expect(journey.uncertainties[0]).toContain("could not be established");
+  });
   it("explores with tools and reports a full-stack path backed by the graph", async () => {
     const seen: {
       tools: { name: string }[];

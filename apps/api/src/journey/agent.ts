@@ -71,8 +71,14 @@ function parseDraft(text: string): z.infer<typeof draftSchema> | null {
   const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
-  const parsed = draftSchema.safeParse(JSON.parse(body.slice(start, end + 1)));
-  return parsed.success ? parsed.data : null;
+  try {
+    const parsed = draftSchema.safeParse(
+      JSON.parse(body.slice(start, end + 1)),
+    );
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 type Built = { journey: Journey } | { error: string };
