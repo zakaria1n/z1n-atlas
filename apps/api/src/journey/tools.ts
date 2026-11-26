@@ -7,6 +7,7 @@ import {
 } from "@z1n/contracts";
 import { createEvidenceTools } from "../evidence/tools";
 import { journeyKinds } from "./journey-kinds";
+import { discoverCandidates } from "./discovery";
 
 type Source = { path: string; content: string };
 // Results are serialized into the model conversation, so each tool answer
@@ -16,6 +17,7 @@ const routeInput = z
   .object({
     method: z.string().trim().min(3).max(10).optional(),
     path: z.string().trim().min(1).max(200).optional(),
+    offset: z.number().int().min(0).max(10000).optional(),
   })
   .strict();
 
@@ -56,6 +58,49 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
       : node.path;
   };
   const tools = {
+    discover_feature: (input: unknown) => {
+      const { query, offset } = z
+        .object({
+          query: z.string().trim().min(2).max(500),
+          offset: z.number().int().min(0).max(10000).optional(),
+        })
+        .strict()
+        .parse(input);
+      const found = discoverCandidates(query, files, graph);
+      const start = offset ?? 0;
+      const candidates = found
+        .slice(start, start + 8)
+        .map(({ node, score, signals, context }) => ({
+          ref: reference(node.id),
+          name: node.name,
+          kind: node.kind,
+          path: node.path,
+          line: node.startLine,
+          score,
+          signals,
+          related: context.slice(0, 3).map((item) => ({
+            ref: reference(item.id),
+            name: item.name,
+            kind: item.kind,
+            path: item.path,
+          })),
+        }));
+      while (candidates.length > 1 && JSON.stringify(candidates).length > 3200)
+        candidates.pop();
+      return {
+        candidates,
+        nextOffset:
+          start + candidates.length < found.length
+            ? start + candidates.length
+            : null,
+        scope:
+          "Selected analyzed files only; rankings are lexical and do not prove a relationship or feature absence.",
+        filesExamined: files.length,
+        graphNodes: graph.nodes.length,
+        unresolved: graph.unresolved,
+        unresolvedCalls: graph.unresolvedCalls,
+      };
+    },
     find_symbols: (input: unknown) => {
       const { query, path } = z
         .object({
@@ -82,7 +127,26 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
       };
     },
     search_code: (input: unknown) => evidence.searchCode(input),
-    read_file: (input: unknown) => evidence.readFile(input),
+    read_file: (input: unknown) => {
+      const result = evidence.readFile(input);
+      const lines: typeof result.lines = [];
+      for (const line of result.lines) {
+        if (lines.length && JSON.stringify([...lines, line]).length > 3000)
+          break;
+        lines.push(line);
+      }
+      return {
+        path: result.path,
+        lines,
+        nextLine:
+          lines.length < result.lines.length
+            ? result.lines[lines.length].line
+            : null,
+        truncated:
+          lines.length < result.lines.length ||
+          lines.some((line) => line.truncated),
+      };
+    },
     get_graph_neighbors: (input: unknown) => {
       const args = z
         .object({
@@ -138,19 +202,18 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
       };
     },
     find_routes: (input: unknown) => {
-      const { method, path } = routeInput.parse(input ?? {});
-      const routes = graph.nodes
-        .filter(
-          (node) =>
-            node.kind === "route" &&
-            (!method ||
-              (node.name ?? "")
-                .toUpperCase()
-                .startsWith(method.toUpperCase())) &&
-            (!path ||
-              (node.name ?? "").toLowerCase().includes(path.toLowerCase())),
-        )
-        .slice(0, 10)
+      const { method, path, offset } = routeInput.parse(input ?? {});
+      const matching = graph.nodes.filter(
+        (node) =>
+          node.kind === "route" &&
+          (!method ||
+            (node.name ?? "").toUpperCase().startsWith(method.toUpperCase())) &&
+          (!path ||
+            (node.name ?? "").toLowerCase().includes(path.toLowerCase())),
+      );
+      const start = offset ?? 0;
+      const routes = matching
+        .slice(start, start + 5)
         .map((node: GraphNode) => ({
           nodeId: node.id,
           ref: reference(node.id),
@@ -171,13 +234,30 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
         }));
       return {
         routes,
-        truncated:
-          graph.nodes.some((node) => node.kind === "route") &&
-          routes.length === 10,
+        nextOffset:
+          start + routes.length < matching.length
+            ? start + routes.length
+            : null,
+        truncated: start + routes.length < matching.length,
+        total: matching.length,
       };
     },
   };
   const definitions: JourneyToolDefinition[] = [
+    {
+      name: "discover_feature",
+      description:
+        "Rank source symbols and routes for a natural-language feature, enriched with directly connected graph nodes. Matches are candidates, not proof. Use offset for more.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", minLength: 2, maxLength: 500 },
+          offset: { type: "integer", minimum: 0, maximum: 10000 },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
     {
       name: "find_symbols",
       description:
@@ -209,7 +289,7 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
     {
       name: "read_file",
       description:
-        "Read up to 40 lines of an analyzed file with their line numbers.",
+        "Read up to 40 lines of an analyzed file. If nextLine is present, request that line onward. Long lines can be truncated.",
       parameters: {
         type: "object",
         properties: {
@@ -256,6 +336,7 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
         properties: {
           method: { type: "string", minLength: 3, maxLength: 10 },
           path: { type: "string", minLength: 1, maxLength: 200 },
+          offset: { type: "integer", minimum: 0, maximum: 10000 },
         },
         additionalProperties: false,
       },

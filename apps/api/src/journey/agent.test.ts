@@ -5,6 +5,7 @@ import path from "node:path";
 import { analyzeFiles } from "@z1n/analysis-core";
 import { runJourneyAgent, type AgentGenerate, type AgentTurn } from "./agent";
 import { completePersistenceEvidence } from "./complete-evidence";
+import { createJourneyTools } from "./tools";
 
 const fixtureDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -74,6 +75,95 @@ function scripted(
 }
 
 describe("AI-guided journey agent", () => {
+  it("returns a bounded source page with a continuation instead of discarding long excerpts", () => {
+    const longFiles = [
+      {
+        path: "long.ts",
+        content: Array.from({ length: 40 }, () => "x".repeat(300)).join("\n"),
+      },
+    ];
+    const emptyGraph = {
+      nodes: [],
+      edges: [],
+      evidence: [],
+      unresolved: 0,
+      unresolvedCalls: 0,
+      notice: "",
+    };
+    const tools = createJourneyTools(longFiles, emptyGraph);
+    const page = JSON.parse(
+      tools.execute({
+        name: "read_file",
+        arguments: '{"path":"long.ts","startLine":1,"endLine":40}',
+      }).output,
+    );
+    expect(page.lines.length).toBeGreaterThan(0);
+    expect(page.nextLine).toBe(page.lines.length + 1);
+    expect(page.truncated).toBe(true);
+  });
+  it("allows a bounded second correction when a model returns prose twice", async () => {
+    const generate = scripted([
+      { kind: "final", text: "I will inspect the code." },
+      { kind: "final", text: "I need one more lookup." },
+      final([], ["Insufficient evidence."]),
+    ]);
+    const journey = await runJourneyAgent({
+      question: "Find an unknown feature",
+      files,
+      graph,
+      generate,
+    });
+    expect(generate.calls).toBe(3);
+    expect(journey.uncertainties).toEqual(["Insufficient evidence."]);
+  });
+  it("paginates routes and reports an empty search without claiming feature absence", () => {
+    const route = graph.nodes.find((node) => node.kind === "route")!;
+    const expanded = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        ...Array.from({ length: 8 }, (_, index) => ({
+          ...route,
+          id: `${route.path}#extra-route-${index}`,
+          name: `GET /extra/${index}`,
+        })),
+      ],
+    };
+    const tools = createJourneyTools(files, expanded);
+    const first = JSON.parse(
+      tools.execute({ name: "find_routes", arguments: "{}" }).output,
+    );
+    expect(first.routes).toHaveLength(5);
+    expect(first.nextOffset).toBe(5);
+    const second = JSON.parse(
+      tools.execute({ name: "find_routes", arguments: '{"offset":5}' }).output,
+    );
+    expect(second.routes.length).toBeGreaterThan(0);
+    expect(
+      second.routes.every(
+        (item: { nodeId: string }) =>
+          !first.routes.some(
+            (prior: { nodeId: string }) => prior.nodeId === item.nodeId,
+          ),
+      ),
+    ).toBe(true);
+    const empty = JSON.parse(
+      tools.execute({
+        name: "find_routes",
+        arguments: '{"path":"unlikely-route-name"}',
+      }).output,
+    );
+    expect(empty.routes).toEqual([]);
+    expect(empty.total).toBe(0);
+    const result = JSON.parse(
+      tools.execute({
+        name: "discover_feature",
+        arguments: '{"query":"register"}',
+      }).output,
+    );
+    expect(result.scope).toContain("do not prove");
+    expect(result.candidates.length).toBeGreaterThan(0);
+  });
   it("does not choose between ambiguous writes without a selected operation", async () => {
     const pythonFiles = loadFixture(
       path.resolve(fixtureDir, "../fastapi-booking"),
@@ -422,6 +512,7 @@ describe("AI-guided journey agent", () => {
     ).toBe(true);
     expect(generate.calls).toBe(3);
     expect(seen[0].tools.map((tool) => tool.name)).toEqual([
+      "discover_feature",
       "find_symbols",
       "search_code",
       "read_file",

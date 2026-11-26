@@ -43,7 +43,7 @@ const JSON_FENCE = /^\s*```(?:json)?\s*/i;
 
 export const JOURNEY_SYSTEM_INSTRUCTIONS =
   "You guide exploration of one analyzed source selection and explain how a feature works. " +
-  "Call tools to find the feature: find_symbols returns short node references, search_code finds strings, read_file reads lines, " +
+  "Start with discover_feature using the user's question to find ranked source candidates and connected routes. If literal searches are empty, broaden them; absence of matches does not establish absence. find_symbols returns short node references, search_code finds strings, read_file reads lines, " +
   "get_graph_neighbors lists the verified relationships of a node with the identifiers to cite, " +
   "find_routes lists HTTP routes and their handlers. " +
   "Ground every step in tool results: cite only node identifiers that a tool returned, and never invent identifiers, files, lines or relationships. " +
@@ -210,6 +210,7 @@ export type JourneyAgentInput = {
   generate: AgentGenerate;
   signal?: AbortSignal;
   maxRounds?: number;
+  maxToolCalls?: number;
 };
 
 /**
@@ -244,6 +245,13 @@ export async function runJourneyAgent(
     1,
     Math.min(20, Math.trunc(input.maxRounds ?? MAX_ROUNDS) || MAX_ROUNDS),
   );
+  const maxToolCalls = Math.max(
+    1,
+    Math.min(
+      60,
+      Math.trunc(input.maxToolCalls ?? MAX_TOOL_CALLS) || MAX_TOOL_CALLS,
+    ),
+  );
   for (let round = 0; round < maxRounds; round++) {
     let turn: AgentTurn;
     try {
@@ -263,7 +271,7 @@ export async function runJourneyAgent(
       );
     }
     if (turn.kind === "tools") {
-      const calls = turn.toolCalls.slice(0, MAX_TOOL_CALLS - toolCalls);
+      const calls = turn.toolCalls.slice(0, maxToolCalls - toolCalls);
       toolCalls += calls.length;
       messages.push({
         role: "assistant",
@@ -300,7 +308,7 @@ export async function runJourneyAgent(
           content: result.output,
         });
       }
-      if (toolCalls >= MAX_TOOL_CALLS) {
+      if (toolCalls >= maxToolCalls) {
         messages.push({
           role: "user",
           text: "The tool budget is used up. Answer now with the final JSON and no tool calls.",
@@ -310,7 +318,7 @@ export async function runJourneyAgent(
     }
     const parsed = parseDraft(turn.text);
     if ("error" in parsed) {
-      if (corrective++) {
+      if (corrective++ >= 2) {
         return unknown(
           "The model did not return the expected JSON answer about this feature.",
         );
@@ -353,7 +361,7 @@ export async function runJourneyAgent(
           break;
         }
       }
-      if (corrective++) {
+      if (corrective++ >= 2) {
         return unknown(`Invalid journey: ${built.error.slice(0, 400)}`);
       }
       messages.push({ role: "assistant", text: turn.text });
