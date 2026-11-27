@@ -383,8 +383,8 @@ describe("grounded answer validation on the chat graph", () => {
       {
         claims: [
           {
-            text: "The login flow delegates to sendRequest, which fetches the URL.",
-            evidenceIds: ["source:src/login.ts:5"],
+            text: "Login lives in the login module.",
+            evidenceIds: ["node:src/login.ts"],
           },
         ],
         uncertainties: [],
