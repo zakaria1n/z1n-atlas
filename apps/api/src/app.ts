@@ -42,7 +42,11 @@ import { createAnalysisCache } from "./analyzer/analysis-cache";
 import { createSnapshotCache } from "./analyzer/snapshot-cache";
 import { createAnalysisJobs } from "./analyzer/analysis-jobs";
 import { MAX_GRAPH_BYTES } from "./analyzer/limits";
-import { serverAiCredential, type ServerAiCredential } from "./config";
+import {
+  semanticRetrievalEnabled,
+  serverAiCredential,
+  type ServerAiCredential,
+} from "./config";
 import {
   externalDevAgentEnabled,
   externalDevAgentGenerate,
@@ -572,6 +576,9 @@ export async function createApp(
         graph,
         model,
         history: input.data.history ?? [],
+        semantic: semanticRetrievalEnabled()
+          ? await snapshot.ensureSemantic()
+          : undefined,
         // Repository-scoped indexes and context are built once per
         // snapshot and reused across requests for the same selection.
         lexical: snapshot.lexical,

@@ -13,7 +13,7 @@ import {
 } from "@z1n/contracts";
 import { createJourneyTools } from "../journey/tools";
 import {
-  collectEvidence,
+  collectEvidenceHybrid,
   buildChatAnswer,
   parseChatDraft,
   retrievalTerms,
@@ -77,6 +77,8 @@ export type ChatGraphInput = {
   lexical?: import("../evidence/lexical-index").LexicalIndex;
   /** Cached repository context enabling the repository_overview tool. */
   context?: import("../context/builder").RepositoryContext;
+  /** Optional local semantic index; when absent or unavailable, lexical only. */
+  semantic?: import("../evidence/semantic-index").SemanticIndex;
   signal?: AbortSignal;
 };
 
@@ -99,15 +101,25 @@ const callIdentity = (name: string, args: unknown): string =>
 export async function answerWithGraph(
   input: ChatGraphInput,
 ): Promise<ChatAnswer> {
-  const { question, files, graph, model, history, signal, lexical, context } =
-    input;
+  const {
+    question,
+    files,
+    graph,
+    model,
+    history,
+    signal,
+    lexical,
+    context,
+    semantic,
+  } = input;
   const terms = retrievalTerms(question, history);
-  const { registry, truncatedRetrieval } = collectEvidence(
+  const { registry, truncatedRetrieval, hybrid } = await collectEvidenceHybrid(
     question,
     files,
     graph,
     history,
     lexical,
+    semantic,
   );
   // Genuinely empty requests — no usable term at all — abstain without a
   // model call. A meaningful question with an empty initial search is not
@@ -247,7 +259,12 @@ export async function answerWithGraph(
       };
     }
     return {
-      result: buildChatAnswer(parsed.draft, registry, truncatedRetrieval),
+      result: buildChatAnswer(
+        parsed.draft,
+        registry,
+        truncatedRetrieval,
+        hybrid,
+      ),
     };
   };
 

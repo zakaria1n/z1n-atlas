@@ -206,3 +206,12 @@ export function liveLlmTestsEnabled(
 ): boolean {
   return developerAiConfig(env).RUN_LIVE_LLM_TESTS === true;
 }
+
+/**
+ * Local semantic retrieval is an opt-in mode: the embedding model and its
+ * runtime are heavy dependencies with a one-time model download, so hybrid
+ * ranking only activates when the operator asks for it. Lexical retrieval
+ * stays the default and is never described as hybrid.
+ */
+export const semanticRetrievalEnabled = (): boolean =>
+  process.env.Z1N_SEMANTIC_RETRIEVAL === "true";

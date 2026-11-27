@@ -2,5 +2,8 @@ packages:
   - apps/*
   - packages/*
 allowBuilds:
+  # Native prebuild validation/copy steps for the local embedding runtime.
+  onnxruntime-node: true
+  protobufjs: true
   sharp: false
   unrs-resolver: false

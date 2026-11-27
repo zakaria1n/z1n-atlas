@@ -7,6 +7,8 @@ import {
 import { createEvidenceTools } from "./tools";
 import { EvidenceRegistry } from "./registry";
 import { createLexicalIndex, type LexicalIndex } from "./lexical-index";
+import type { SemanticIndex } from "./semantic-index";
+import { rrfFuse } from "./rrf";
 import { discoverCandidates } from "../journey/discovery";
 
 type Source = { path: string; content: string };
@@ -287,6 +289,7 @@ export function buildChatAnswer(
   draft: z.infer<typeof chatDraftSchema>,
   registry: EvidenceRegistry,
   truncatedRetrieval: boolean,
+  hybrid = false,
 ): ChatAnswer {
   let rejected = false;
   const claims: ChatAnswer["claims"] = [];
@@ -311,7 +314,60 @@ export function buildChatAnswer(
     uncertainties.push(
       "Evidence retrieval was truncated; some relevant matches may be missing from the supplied context.",
     );
+  if (hybrid)
+    uncertainties.push(
+      "Hybrid retrieval combined lexical and semantic rankings (local embedding model); symbol matches may be semantic rather than literal.",
+    );
   if (!claims.length && !uncertainties.length)
     uncertainties.push("There is not enough verified evidence to answer.");
   return chatAnswerSchema.parse({ claims, uncertainties });
+}
+
+/**
+ * Deterministic retrieval plus optional semantic expansion: the lexical
+ * and semantic symbol rankings are fused with reciprocal rank fusion and
+ * the fused anchors join the evidence ledger. Every citation still
+ * validates against the registry alone.
+ */
+export async function collectEvidenceHybrid(
+  question: string,
+  files: Source[],
+  graph: CodeGraph,
+  history: { role: "user" | "assistant"; text: string }[] = [],
+  lexical?: LexicalIndex,
+  semantic?: SemanticIndex,
+): Promise<{
+  registry: EvidenceRegistry;
+  truncatedRetrieval: boolean;
+  hybrid: boolean;
+}> {
+  const base = collectEvidence(question, files, graph, history, lexical);
+  if (!semantic?.available) return { ...base, hybrid: false };
+  const terms = retrievalTerms(question, history).join(" ");
+  const lexicalIds = (lexical?.search(terms, 10) ?? []).map(
+    (hit) => hit.nodeId,
+  );
+  const semanticHits = await semantic.search(question, 10);
+  const fused = rrfFuse(
+    lexicalIds,
+    semanticHits.map((hit) => hit.nodeId),
+    8,
+  );
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  for (const nodeId of fused) {
+    const node = byId.get(nodeId);
+    if (!node || base.registry.has(`node:${nodeId}`)) continue;
+    base.registry.add({
+      id: `node:${nodeId}`,
+      filePath: node.path,
+      startLine: node.startLine ?? 1,
+      endLine: node.endLine ?? node.startLine ?? 1,
+      snippet: `${node.name ?? node.path} (${node.kind ?? "file"}); hybrid match`,
+    });
+  }
+  return {
+    registry: base.registry,
+    truncatedRetrieval: base.truncatedRetrieval,
+    hybrid: true,
+  };
 }

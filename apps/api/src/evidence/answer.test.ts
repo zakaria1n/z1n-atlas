@@ -378,6 +378,69 @@ describe("grounded answer validation on the chat graph", () => {
     const toolAnswer = model.calls[1].at(-1);
     expect(toolAnswer).toBeInstanceOf(ToolMessage);
   });
+  it("fuses semantic anchors into the evidence and discloses hybrid mode", async () => {
+    const model = new ScriptedChatModel([
+      {
+        claims: [
+          {
+            text: "The login flow delegates to sendRequest, which fetches the URL.",
+            evidenceIds: ["source:src/login.ts:5"],
+          },
+        ],
+        uncertainties: [],
+      },
+    ]);
+    const semanticAvailable = {
+      available: true as const,
+      search: async () => [
+        {
+          nodeId: "src/login.ts",
+          path: "src/login.ts",
+          startLine: 1,
+          endLine: 1,
+          name: null,
+          score: 0.9,
+        },
+      ],
+    };
+    const answer = await answerWithGraph({
+      question: "Where is login?",
+      files,
+      graph,
+      model,
+      semantic: semanticAvailable,
+    });
+    // The semantic anchor joined the ledger and the answer says hybrid
+    // retrieval was active — never presenting it as literal search.
+    expect(answer.uncertainties.join()).toContain(
+      "Hybrid retrieval combined lexical and semantic rankings",
+    );
+    expect(answer.claims[0].citations[0]).toMatchObject({
+      filePath: "src/login.ts",
+    });
+    const semanticUnavailable = {
+      available: false as const,
+      search: async () => [],
+    };
+    const plain = await answerWithGraph({
+      question: "Where is login?",
+      files,
+      graph,
+      model: new ScriptedChatModel([
+        {
+          claims: [
+            {
+              text: "Cited.",
+              evidenceIds: ["source:src/login.ts:1"],
+            },
+          ],
+          uncertainties: [],
+        },
+      ]),
+      semantic: semanticUnavailable,
+    });
+    expect(plain.uncertainties.join()).not.toContain("Hybrid retrieval");
+  });
 });
 
 describe("chat evidence retrieval quality", () => {

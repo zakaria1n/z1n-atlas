@@ -8,6 +8,10 @@ import {
   buildRepositoryContext,
   type RepositoryContext,
 } from "../context/builder";
+import {
+  createSemanticIndex,
+  type SemanticIndex,
+} from "../evidence/semantic-index";
 
 type Source = { path: string; content: string };
 
@@ -23,6 +27,12 @@ export type RepositorySnapshot = {
   graph: CodeGraph;
   lexical: LexicalIndex;
   context: RepositoryContext;
+  /**
+   * Builds the semantic index on first use and caches it for the
+   * snapshot's lifetime, so unchanged source is never re-embedded. A
+   * failed build resolves to an unavailable index (lexical-only).
+   */
+  ensureSemantic: () => Promise<SemanticIndex>;
 };
 
 const digest = (files: Source[]): string => {
@@ -59,12 +69,23 @@ export function createSnapshotCache({ maxEntries = 3, ttlMs = 600_000 } = {}) {
       const existing = entries.get(identity);
       if (existing) return existing.snapshot;
       while (entries.size >= maxEntries) remove(entries.keys().next().value!);
+      let semanticPromise: Promise<SemanticIndex> | undefined;
       const snapshot: RepositorySnapshot = {
         identity: identity.slice(0, 32),
         files,
         graph,
         lexical: createLexicalIndex(files, graph),
         context: buildRepositoryContext(identity.slice(0, 32), files, graph),
+        ensureSemantic: () => {
+          if (!semanticPromise)
+            semanticPromise = createSemanticIndex(files, graph).catch(
+              (): SemanticIndex => ({
+                available: false,
+                search: async () => [],
+              }),
+            );
+          return semanticPromise;
+        },
       };
       const timer = setTimeout(() => remove(identity), ttlMs);
       timer.unref();
