@@ -44,33 +44,49 @@ vi.mock("./providers/discovery", () => ({
 vi.mock("./providers/test-model", () => ({
   testModel: vi.fn(async () => undefined),
 }));
+// The shared model mock can be flipped into a failing construction mode to
+// prove the chat endpoint releases its concurrency slot on failure.
+export const chatModelState = { failing: false };
 vi.mock("./orchestration/chat-model", () => ({
-  createChatModel: vi.fn(() => ({
+  createChatModel: vi.fn(() => {
+    if (
+      (
+        globalThis as unknown as {
+          __chatModelState?: { failing: boolean };
+        }
+      ).__chatModelState?.failing
+    )
+      throw new Error("simulated integration construction failure");
     // One scripted model serves both endpoints: chat cites the first
     // supplied evidence id, the journey draft fails schema validation and
     // exercises the honest-failure path.
-    bindTools: () => ({
-      invoke: async (
-        messages: { at: (index: number) => { content: unknown } }[],
-      ) => {
-        const payload = JSON.parse(String(messages.at(-1)!.content));
-        return new AIMessage(
-          JSON.stringify({
-            claims: [
-              {
-                text: "Cited from supplied evidence.",
-                evidenceIds: [payload.evidence?.[0]?.id ?? "missing"],
-              },
-            ],
-            uncertainties: [],
-          }),
-        );
-      },
-    }),
-  })),
+    return {
+      bindTools: () => ({
+        invoke: async (
+          messages: { at: (index: number) => { content: unknown } }[],
+        ) => {
+          const payload = JSON.parse(String(messages.at(-1)!.content));
+          return new AIMessage(
+            JSON.stringify({
+              claims: [
+                {
+                  text: "Cited from supplied evidence.",
+                  evidenceIds: [payload.evidence?.[0]?.id ?? "missing"],
+                },
+              ],
+              uncertainties: [],
+            }),
+          );
+        },
+      }),
+    };
+  }),
 }));
 let app: FastifyInstance;
 beforeAll(async () => {
+  (
+    globalThis as unknown as { __chatModelState: { failing: boolean } }
+  ).__chatModelState = chatModelState;
   app = await createApp();
 });
 afterAll(async () => {
@@ -643,6 +659,62 @@ describe("journey HTTP boundary", () => {
       expect(response.json().nodeIds).toEqual([]);
       expect(response.json().uncertainties.length).toBeGreaterThan(0);
     } finally {
+      await isolated.close();
+    }
+  });
+});
+
+describe("chat concurrency slot hygiene", () => {
+  it("releases the slot when integration construction fails", async () => {
+    const isolated = await createApp();
+    const state = (
+      globalThis as unknown as { __chatModelState: { failing: boolean } }
+    ).__chatModelState;
+    try {
+      const headers = { origin: "http://localhost:3000" };
+      const payload = {
+        ai: {
+          provider: "openai",
+          apiKey: "fake-key",
+          model: "demo",
+          providerConsent: true,
+        },
+        question: "Where is login?",
+        files: [{ path: "a.ts", content: "export const login = 1;" }],
+        origin: "local",
+        consent: true,
+        providerConsent: true,
+      };
+      state.failing = true;
+      const first = await isolated.inject({
+        method: "POST",
+        url: "/api/chat",
+        headers,
+        payload,
+      });
+      const second = await isolated.inject({
+        method: "POST",
+        url: "/api/chat",
+        headers,
+        payload,
+      });
+      expect(first.statusCode).toBe(502);
+      expect(second.statusCode).toBe(502);
+      state.failing = false;
+      // Both failures must have released their slots: the endpoint caps
+      // concurrency at two, so a leak would answer this request with 429.
+      const third = await isolated.inject({
+        method: "POST",
+        url: "/api/chat",
+        headers,
+        payload,
+      });
+      expect(third.statusCode).toBe(200);
+      expect(third.json().claims[0].citations[0]).toMatchObject({
+        filePath: "a.ts",
+      });
+    } finally {
+      state.failing = false;
       await isolated.close();
     }
   });

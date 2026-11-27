@@ -19,6 +19,8 @@ import {
   retrievalTerms,
   SYSTEM_INSTRUCTIONS,
 } from "../evidence/answer";
+type SemanticRetrievalState =
+  import("../evidence/answer").SemanticRetrievalState;
 import { registerToolResult } from "../evidence/tool-registration";
 import { ToolCallingModel } from "./chat-model";
 
@@ -79,6 +81,8 @@ export type ChatGraphInput = {
   context?: import("../context/builder").RepositoryContext;
   /** Optional local semantic index; when absent or unavailable, lexical only. */
   semantic?: import("../evidence/semantic-index").SemanticIndex;
+  /** The snapshot's honest semantic build state when semantic is requested. */
+  semanticBuildState?: "idle" | "building" | "ready" | "unavailable";
   signal?: AbortSignal;
 };
 
@@ -111,9 +115,14 @@ export async function answerWithGraph(
     lexical,
     context,
     semantic,
+    semanticBuildState,
   } = input;
   const terms = retrievalTerms(question, history);
-  const { registry, truncatedRetrieval, hybrid } = await collectEvidenceHybrid(
+  const {
+    registry,
+    truncatedRetrieval,
+    semanticState: fusedState,
+  } = await collectEvidenceHybrid(
     question,
     files,
     graph,
@@ -121,6 +130,16 @@ export async function answerWithGraph(
     lexical,
     semantic,
   );
+  // An awaiting-but-still-building index is reported honestly instead of
+  // passing as silent lexical-only retrieval.
+  const semanticState: SemanticRetrievalState =
+    fusedState === "hybrid"
+      ? "hybrid"
+      : fusedState === "unavailable"
+        ? "unavailable"
+        : semanticBuildState === "building"
+          ? "indexing"
+          : "off";
   // Genuinely empty requests — no usable term at all — abstain without a
   // model call. A meaningful question with an empty initial search is not
   // evidence of absence: it enters the graph so the model can reformulate
@@ -263,7 +282,7 @@ export async function answerWithGraph(
         parsed.draft,
         registry,
         truncatedRetrieval,
-        hybrid,
+        semanticState,
       ),
     };
   };

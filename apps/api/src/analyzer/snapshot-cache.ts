@@ -41,7 +41,14 @@ export type RepositorySnapshot = {
    * snapshot's lifetime, so unchanged source is never re-embedded. A
    * failed build resolves to an unavailable index (lexical-only).
    */
-  ensureSemantic: () => Promise<SemanticIndex>;
+  ensureSemantic: (signal?: AbortSignal) => Promise<SemanticIndex>;
+  /**
+   * The honest semantic state of this snapshot: "building" while the
+   * first eligible request is still embedding, then "ready" or
+   * "unavailable". Chat reports it instead of claiming hybrid retrieval
+   * that did not happen.
+   */
+  semanticState: () => "idle" | "building" | "ready" | "unavailable";
 };
 
 const digest = (files: Source[]): string => {
@@ -79,6 +86,8 @@ export function createSnapshotCache({ maxEntries = 3, ttlMs = 600_000 } = {}) {
       if (existing) return existing.snapshot;
       while (entries.size >= maxEntries) remove(entries.keys().next().value!);
       let semanticPromise: Promise<SemanticIndex> | undefined;
+      let semanticStateValue: "idle" | "building" | "ready" | "unavailable" =
+        "idle";
       const adapter = createGraphAdapter(graph);
       const intelligence = buildIntelligence(graph, adapter);
       const snapshot: RepositorySnapshot = {
@@ -94,16 +103,30 @@ export function createSnapshotCache({ maxEntries = 3, ttlMs = 600_000 } = {}) {
         ),
         adapter,
         intelligence,
-        ensureSemantic: () => {
-          if (!semanticPromise)
-            semanticPromise = createSemanticIndex(files, graph).catch(
-              (): SemanticIndex => ({
-                available: false,
-                search: async () => [],
-              }),
-            );
+        ensureSemantic: (signal?: AbortSignal) => {
+          // Concurrent callers share one build. A cancelled build clears
+          // the cached attempt so the next request rebuilds from scratch;
+          // a completed build (ready or unavailable) stays cached.
+          if (semanticPromise) return semanticPromise;
+          semanticStateValue = "building";
+          const attempt = createSemanticIndex(files, graph, { signal }).then(
+            (index) => {
+              semanticStateValue = index.available ? "ready" : "unavailable";
+              return index;
+            },
+          );
+          semanticPromise = attempt.catch((error): SemanticIndex => {
+            if (signal?.aborted) {
+              semanticPromise = undefined;
+              semanticStateValue = "idle";
+            } else {
+              semanticStateValue = "unavailable";
+            }
+            return { available: false, search: async () => [] };
+          });
           return semanticPromise;
         },
+        semanticState: () => semanticStateValue,
       };
       const timer = setTimeout(() => remove(identity), ttlMs);
       timer.unref();

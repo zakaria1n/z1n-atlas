@@ -21,31 +21,37 @@ const QUERY_PREFIX =
 const CHUNK_CHARS = 1200;
 const BATCH = 16;
 const MODEL = "Snowflake/snowflake-arctic-embed-xs";
+/** Query vectors are bounded: a snapshot serves many questions per run. */
+const MAX_QUERY_CACHE = 64;
 
 type Embedder = (
   texts: string[],
   options: Record<string, unknown>,
 ) => Promise<{ data: Float32Array; dims: number[] }>;
 
+type EmbedderLoader = () => Promise<Embedder | null>;
+
 // The model loads once per process; a failed load (no network, no runtime)
 // stays failed so every later request degrades to lexical immediately.
 let embedderPromise: Promise<Embedder | null> | undefined;
 
-async function getEmbedder(): Promise<Embedder | null> {
-  if (!embedderPromise)
-    embedderPromise = (async () => {
-      try {
-        const { pipeline } = await import("@huggingface/transformers");
-        const extractor = await pipeline("feature-extraction", MODEL, {
-          dtype: "q8",
-        });
-        return ((texts: string[], options: Record<string, unknown>) =>
-          extractor(texts, options as never)) as Embedder;
-      } catch {
-        return null;
-      }
-    })();
-  return embedderPromise;
+function defaultLoader(): EmbedderLoader {
+  return async () => {
+    if (!embedderPromise)
+      embedderPromise = (async () => {
+        try {
+          const { pipeline } = await import("@huggingface/transformers");
+          const extractor = await pipeline("feature-extraction", MODEL, {
+            dtype: "q8",
+          });
+          return ((texts: string[], options: Record<string, unknown>) =>
+            extractor(texts, options as never)) as Embedder;
+        } catch {
+          return null;
+        }
+      })();
+    return embedderPromise;
+  };
 }
 
 const normalize = (vector: number[]): number[] => {
@@ -55,12 +61,19 @@ const normalize = (vector: number[]): number[] => {
   return magnitude > 0 ? vector.map((value) => value / magnitude) : vector;
 };
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted)
+    throw new Error("The semantic index build was cancelled.");
+}
+
 async function embedTexts(
   embed: Embedder,
   texts: string[],
+  signal?: AbortSignal,
 ): Promise<number[][]> {
   const vectors: number[][] = [];
   for (let start = 0; start < texts.length; start += BATCH) {
+    throwIfAborted(signal);
     const output = await embed(texts.slice(start, start + BATCH), {
       pooling: "cls",
       normalize: true,
@@ -80,13 +93,24 @@ async function embedTexts(
  * Each chunk keeps its exact node identity, path and line span, so a
  * result never collapses distinct functions of one file. Unavailable is
  * an honest state: the caller then runs lexical-only retrieval.
+ *
+ * The build honours the caller's cancellation between embedding batches;
+ * a cancelled or failed build resolves to an unavailable index instead of
+ * a partial one, so the snapshot can retry a later request from scratch.
+ * The query-vector cache is bounded, because a long-lived snapshot serves
+ * many questions.
  */
 export async function createSemanticIndex(
   files: Source[],
   graph: CodeGraph,
+  options: {
+    signal?: AbortSignal;
+    loadEmbedder?: EmbedderLoader;
+  } = {},
 ): Promise<SemanticIndex> {
-  const embed = await getEmbedder();
+  const embed = await (options.loadEmbedder ?? defaultLoader())();
   if (!embed) return { available: false, search: async () => [] };
+  throwIfAborted(options.signal);
   const linesOf = new Map(
     files.map((file) => [file.path, file.content.split(/\r\n|\r|\n/)]),
   );
@@ -106,13 +130,17 @@ export async function createSemanticIndex(
       text: `${node.name ?? ""} in ${node.path}\n${text}`.slice(0, CHUNK_CHARS),
     };
   });
-  let chunkVectors: number[][] | undefined;
+  let chunkVectors: number[][];
   try {
     chunkVectors = await embedTexts(
       embed,
       chunks.map((chunk) => chunk.text),
+      options.signal,
     );
-  } catch {
+  } catch (error) {
+    // A cancelled build propagates so the snapshot can retry from
+    // scratch; any other failure degrades honestly to lexical-only.
+    if (options.signal?.aborted) throw error;
     return { available: false, search: async () => [] };
   }
   const queryVectors = new Map<string, number[]>();
@@ -124,6 +152,10 @@ export async function createSemanticIndex(
         try {
           const [vector] = await embedTexts(embed, [QUERY_PREFIX + question]);
           queryVector = vector;
+          if (queryVectors.size >= MAX_QUERY_CACHE) {
+            const oldest = queryVectors.keys().next().value!;
+            queryVectors.delete(oldest);
+          }
           queryVectors.set(question, vector);
         } catch {
           return [];
@@ -137,7 +169,7 @@ export async function createSemanticIndex(
             startLine: chunk.node.startLine ?? 1,
             endLine: chunk.node.endLine ?? chunk.node.startLine ?? 1,
             name: chunk.node.name ?? null,
-            score: chunkVectors![position].reduce(
+            score: chunkVectors[position].reduce(
               (sum, value, index) => sum + value * queryVector![index],
               0,
             ),

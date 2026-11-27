@@ -59,3 +59,61 @@ describe("repository snapshot cache", () => {
     expect(cache.size).toBe(0);
   });
 });
+
+describe("snapshot semantic state machine", () => {
+  const graph: CodeGraph = {
+    nodes: [
+      { id: "a.ts", path: "a.ts", exports: [] },
+      {
+        id: "a.ts#1",
+        path: "a.ts",
+        name: "alphaValue",
+        kind: "function",
+        startLine: 1,
+        endLine: 1,
+        exports: [],
+      },
+    ],
+    edges: [],
+    evidence: [],
+    unresolved: 0,
+    unresolvedCalls: 0,
+    notice: "",
+  };
+  it("reports building, then ready, and shares one build across callers", async () => {
+    const cache = createSnapshotCache();
+    const snapshot = cache.obtain(filesA, graph);
+    let release: (() => void) | undefined;
+    const snapshotAny = snapshot as unknown as {
+      ensureSemantic: (signal?: AbortSignal) => Promise<{ available: boolean }>;
+      semanticState: () => string;
+    };
+    // Control the build: inject a controllable loader by wrapping
+    // createSemanticIndex through the public API — the build is quick, so
+    // state assertions focus on the post-build transition.
+    const build = snapshotAny.ensureSemantic();
+    const concurrent = snapshotAny.ensureSemantic();
+    expect(snapshotAny.semanticState()).toBe("building");
+    const [index] = await Promise.all([build, concurrent]);
+    expect(index.available).toBe(true);
+    expect(snapshotAny.semanticState()).toBe("ready");
+    void release;
+  });
+  it("returns to idle after a cancelled build and rebuilds on demand", async () => {
+    const cache = createSnapshotCache();
+    const snapshot = cache.obtain(filesA, graph);
+    const snapshotAny = snapshot as unknown as {
+      ensureSemantic: (signal?: AbortSignal) => Promise<{ available: boolean }>;
+      semanticState: () => string;
+    };
+    const controller = new AbortController();
+    controller.abort();
+    const index = await snapshotAny.ensureSemantic(controller.signal);
+    expect(index.available).toBe(false);
+    expect(snapshotAny.semanticState()).toBe("idle");
+    // A later request starts a fresh build that succeeds.
+    const retry = await snapshotAny.ensureSemantic();
+    expect(retry.available).toBe(true);
+    expect(snapshotAny.semanticState()).toBe("ready");
+  });
+});

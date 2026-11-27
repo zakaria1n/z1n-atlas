@@ -550,19 +550,21 @@ export async function createApp(
       });
     }
     // Development-only chat transport through the same external model
-    // bridge the journey uses, presented as a regular chat model.
-    const credential = resolved.credential!;
-    const model =
-      input.data.serverAi && externalDevAgentEnabled()
-        ? new DevBridgeChatModel(await externalDevAgentGenerate())
-        : createChatModel({
-            provider: credential.provider,
-            apiKey: credential.apiKey,
-            model: credential.model as string,
-            maxOutputTokens: 1500,
-          });
+    // bridge the journey uses, presented as a regular chat model. Every
+    // step after the slot was taken stays inside the guarded block so a
+    // failure always releases the concurrency slot.
     try {
       const { question, files } = input.data;
+      const credential = resolved.credential!;
+      const model =
+        input.data.serverAi && externalDevAgentEnabled()
+          ? new DevBridgeChatModel(await externalDevAgentGenerate())
+          : createChatModel({
+              provider: credential.provider,
+              apiKey: credential.apiKey,
+              model: credential.model as string,
+              maxOutputTokens: 1500,
+            });
       const graph =
         analysisCache.get(input.data.analysisId, files) ??
         validatedGraph(
@@ -570,15 +572,32 @@ export async function createApp(
           files,
         );
       const snapshot = snapshots.obtain(files, graph);
+      // The first eligible request must not stall on a twenty-second
+      // embedding build: wait a bounded moment, then answer lexically
+      // while the build continues for later requests.
+      let semantic:
+        import("./evidence/semantic-index").SemanticIndex | undefined;
+      let semanticBuildState:
+        "idle" | "building" | "ready" | "unavailable" | undefined;
+      if (semanticRetrievalEnabled()) {
+        const result = await Promise.race([
+          snapshot.ensureSemantic(),
+          new Promise<"timeout">((resolve) => {
+            const timer = setTimeout(() => resolve("timeout"), 15_000);
+            timer.unref();
+          }),
+        ]);
+        if (result === "timeout") semanticBuildState = snapshot.semanticState();
+        else semantic = result;
+      }
       const answer = await answerWithGraph({
         question,
         files,
         graph,
         model,
         history: input.data.history ?? [],
-        semantic: semanticRetrievalEnabled()
-          ? await snapshot.ensureSemantic()
-          : undefined,
+        semantic,
+        semanticBuildState,
         // Repository-scoped indexes and context are built once per
         // snapshot and reused across requests for the same selection.
         lexical: snapshot.lexical,

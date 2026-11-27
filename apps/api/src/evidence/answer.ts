@@ -285,11 +285,14 @@ export function collectEvidence(
  * claims, at most five citations each, claims whose citations are all
  * absent are dropped, and every omission is disclosed.
  */
+export type SemanticRetrievalState =
+  "off" | "hybrid" | "unavailable" | "indexing";
+
 export function buildChatAnswer(
   draft: z.infer<typeof chatDraftSchema>,
   registry: EvidenceRegistry,
   truncatedRetrieval: boolean,
-  hybrid = false,
+  semanticState: SemanticRetrievalState = "off",
 ): ChatAnswer {
   let rejected = false;
   const claims: ChatAnswer["claims"] = [];
@@ -314,9 +317,17 @@ export function buildChatAnswer(
     uncertainties.push(
       "Evidence retrieval was truncated; some relevant matches may be missing from the supplied context.",
     );
-  if (hybrid)
+  if (semanticState === "hybrid")
     uncertainties.push(
       "Hybrid retrieval combined lexical and semantic rankings (local embedding model); symbol matches may be semantic rather than literal.",
+    );
+  if (semanticState === "unavailable")
+    uncertainties.push(
+      "Semantic retrieval was requested but the local model is unavailable; matches come from lexical retrieval only.",
+    );
+  if (semanticState === "indexing")
+    uncertainties.push(
+      "Semantic indexing was still in progress; matches come from lexical retrieval only.",
     );
   if (!claims.length && !uncertainties.length)
     uncertainties.push("There is not enough verified evidence to answer.");
@@ -339,10 +350,11 @@ export async function collectEvidenceHybrid(
 ): Promise<{
   registry: EvidenceRegistry;
   truncatedRetrieval: boolean;
-  hybrid: boolean;
+  semanticState: SemanticRetrievalState;
 }> {
   const base = collectEvidence(question, files, graph, history, lexical);
-  if (!semantic?.available) return { ...base, hybrid: false };
+  if (!semantic?.available)
+    return { ...base, semanticState: semantic ? "unavailable" : "off" };
   const terms = retrievalTerms(question, history).join(" ");
   const lexicalIds = (lexical?.search(terms, 10) ?? []).map(
     (hit) => hit.nodeId,
@@ -368,6 +380,6 @@ export async function collectEvidenceHybrid(
   return {
     registry: base.registry,
     truncatedRetrieval: base.truncatedRetrieval,
-    hybrid: true,
+    semanticState: "hybrid",
   };
 }
