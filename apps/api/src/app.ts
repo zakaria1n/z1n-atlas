@@ -565,15 +565,17 @@ export async function createApp(
           await runAnalysis(files, { signal: abort.signal }),
           files,
         );
+      const snapshot = snapshots.obtain(files, graph);
       const answer = await answerWithGraph({
         question,
         files,
         graph,
         model,
         history: input.data.history ?? [],
-        // Repository-scoped indexes are built once per snapshot and reused
-        // across requests for the same selection.
-        lexical: snapshots.obtain(files, graph).lexical,
+        // Repository-scoped indexes and context are built once per
+        // snapshot and reused across requests for the same selection.
+        lexical: snapshot.lexical,
+        context: snapshot.context,
         signal: abort.signal,
       });
       return chatAnswerSchema.parse(answer);
@@ -621,6 +623,9 @@ export async function createApp(
           await runAnalysis(input.data.files, { signal: abort.signal }),
           input.data.files,
         );
+      // Repository-scoped snapshot: indexes and context are built once per
+      // selection and reused across chat and journey requests.
+      const snapshot = snapshots.obtain(input.data.files, graph);
       const resolved = resolveAiCredential(input.data);
       // Development-only external model bridge: the same runJourneyAgent
       // graph, tools and validation run unchanged; only the model transport
@@ -638,6 +643,7 @@ export async function createApp(
           files: input.data.files,
           graph,
           model: new DevBridgeChatModel(await externalDevAgentGenerate()),
+          context: snapshot.context,
           signal: abort.signal,
           maxRounds: Number(process.env.Z1N_JOURNEY_MAX_ROUNDS ?? 6),
           maxToolCalls: Number(process.env.Z1N_JOURNEY_MAX_TOOL_CALLS ?? 18),
@@ -663,6 +669,7 @@ export async function createApp(
           files: input.data.files,
           graph,
           model: createChatModel({ ...credential, maxOutputTokens: 1600 }),
+          context: snapshot.context,
           signal: abort.signal,
           maxRounds: Number(process.env.Z1N_JOURNEY_MAX_ROUNDS ?? 6),
           maxToolCalls: Number(process.env.Z1N_JOURNEY_MAX_TOOL_CALLS ?? 18),

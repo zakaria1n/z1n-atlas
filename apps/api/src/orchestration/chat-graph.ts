@@ -75,6 +75,8 @@ export type ChatGraphInput = {
   history?: { role: "user" | "assistant"; text: string }[];
   /** Repository-scoped lexical index from the snapshot cache, when available. */
   lexical?: import("../evidence/lexical-index").LexicalIndex;
+  /** Cached repository context enabling the repository_overview tool. */
+  context?: import("../context/builder").RepositoryContext;
   signal?: AbortSignal;
 };
 
@@ -97,7 +99,8 @@ const callIdentity = (name: string, args: unknown): string =>
 export async function answerWithGraph(
   input: ChatGraphInput,
 ): Promise<ChatAnswer> {
-  const { question, files, graph, model, history, signal, lexical } = input;
+  const { question, files, graph, model, history, signal, lexical, context } =
+    input;
   const terms = retrievalTerms(question, history);
   const { registry, truncatedRetrieval } = collectEvidence(
     question,
@@ -116,7 +119,7 @@ export async function answerWithGraph(
       uncertainties: ["No matching evidence was found in the selected files."],
     };
   const recovery = !registry.size;
-  const tools = createJourneyTools(files, graph);
+  const tools = createJourneyTools(files, graph, context);
   const boundModel = model.bindTools(tools.definitions);
   const totalTimeout = AbortSignal.timeout(TOTAL_TIMEOUT_MS);
   const callSignal = () =>

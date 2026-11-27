@@ -8,6 +8,7 @@ import {
 import { createEvidenceTools } from "../evidence/tools";
 import { journeyKinds } from "./journey-kinds";
 import { discoverCandidates } from "./discovery";
+import { contextOverview, type RepositoryContext } from "../context/builder";
 
 type Source = { path: string; content: string };
 // Results are serialized into the model conversation, so each tool answer
@@ -35,7 +36,11 @@ export type JourneyToolResult = { name: string; output: string };
  * follow relationships and list routes, but it cannot obtain anything that
  * is not already evidence-backed.
  */
-export function createJourneyTools(files: Source[], graph: CodeGraph) {
+export function createJourneyTools(
+  files: Source[],
+  graph: CodeGraph,
+  context?: RepositoryContext,
+) {
   analysisRequestSchema.parse({ files, origin: "github", consent: false });
   if (!graphIsValid(graph, files)) throw new Error("Invalid graph evidence.");
   const evidence = createEvidenceTools(files, graph);
@@ -58,6 +63,15 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
       : node.path;
   };
   const tools = {
+    ...(context
+      ? {
+          repository_overview: () => ({
+            overview: contextOverview(context),
+            scope:
+              "Facts come from the analyzed selection and manifests; hotspots are structural inferences.",
+          }),
+        }
+      : {}),
     discover_feature: (input: unknown) => {
       const { query, offset } = z
         .object({
@@ -244,6 +258,20 @@ export function createJourneyTools(files: Source[], graph: CodeGraph) {
     },
   };
   const definitions: JourneyToolDefinition[] = [
+    ...(context
+      ? [
+          {
+            name: "repository_overview",
+            description:
+              "Bounded repository statistics: files, symbols, languages, frameworks from manifests, routes, degree-ranked hotspot symbols and analysis limitations.",
+            parameters: {
+              type: "object",
+              properties: {},
+              additionalProperties: false,
+            },
+          },
+        ]
+      : []),
     {
       name: "discover_feature",
       description:

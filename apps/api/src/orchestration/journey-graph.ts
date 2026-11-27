@@ -71,6 +71,8 @@ export type JourneyGraphInput = {
   files: { path: string; content: string }[];
   graph: CodeGraph;
   model: ToolCallingModel;
+  /** Cached repository context enabling the repository_overview tool. */
+  context?: import("../context/builder").RepositoryContext;
   signal?: AbortSignal;
   maxRounds?: number;
   maxToolCalls?: number;
@@ -86,7 +88,7 @@ export type JourneyGraphInput = {
 export async function runJourneyAgent(
   input: JourneyGraphInput,
 ): Promise<Journey> {
-  const { question, files, graph, model, signal } = input;
+  const { question, files, graph, model, signal, context } = input;
   const maxRounds = Math.max(
     1,
     Math.min(20, Math.trunc(input.maxRounds ?? MAX_ROUNDS) || MAX_ROUNDS),
@@ -98,7 +100,7 @@ export async function runJourneyAgent(
       Math.trunc(input.maxToolCalls ?? MAX_TOOL_CALLS) || MAX_TOOL_CALLS,
     ),
   );
-  const tools = createJourneyTools(files, graph);
+  const tools = createJourneyTools(files, graph, context);
   const totalTimeout = AbortSignal.timeout(TOTAL_TIMEOUT_MS);
   const callSignal = () =>
     AbortSignal.any([

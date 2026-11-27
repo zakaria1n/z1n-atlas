@@ -4,6 +4,10 @@ import {
   createLexicalIndex,
   type LexicalIndex,
 } from "../evidence/lexical-index";
+import {
+  buildRepositoryContext,
+  type RepositoryContext,
+} from "../context/builder";
 
 type Source = { path: string; content: string };
 
@@ -18,6 +22,7 @@ export type RepositorySnapshot = {
   files: Source[];
   graph: CodeGraph;
   lexical: LexicalIndex;
+  context: RepositoryContext;
 };
 
 const digest = (files: Source[]): string => {
@@ -59,6 +64,7 @@ export function createSnapshotCache({ maxEntries = 3, ttlMs = 600_000 } = {}) {
         files,
         graph,
         lexical: createLexicalIndex(files, graph),
+        context: buildRepositoryContext(identity.slice(0, 32), files, graph),
       };
       const timer = setTimeout(() => remove(identity), ttlMs);
       timer.unref();
