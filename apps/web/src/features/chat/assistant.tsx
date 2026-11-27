@@ -73,14 +73,19 @@ export function Assistant({
       );
       if (pending.current === controller) {
         setAnswer(result);
+        // The history contract bounds each turn's text (500 characters);
+        // clamp here so follow-up requests always match the schema.
+        const clamp = (text: string) =>
+          text.length > 500 ? `${text.slice(0, 499)}…` : text;
         setTurns((current) => [
           ...current,
-          { role: "user", text: question },
+          { role: "user", text: clamp(question) },
           {
             role: "assistant",
-            text:
+            text: clamp(
               result.claims.map((claim) => claim.text).join(" ") ||
-              result.uncertainties.join(" "),
+                result.uncertainties.join(" "),
+            ),
           },
         ]);
       }

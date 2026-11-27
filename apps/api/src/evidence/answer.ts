@@ -142,7 +142,7 @@ export function collectEvidence(
   // refill policy below and by the capped registry the discovery phase adds
   // into, so truncation is reported exactly when items were dropped.
   let truncatedRetrieval = false;
-  const collected = new EvidenceRegistry(Number.MAX_SAFE_INTEGER);
+  const collected = new EvidenceRegistry(Number.MAX_SAFE_INTEGER, files);
   for (const term of terms) {
     const search = tools.searchCode({ query: term });
     if (search.truncated) truncatedRetrieval = true;
@@ -206,7 +206,7 @@ export function collectEvidence(
   // questions keep receiving symbol-level evidence.
   const reserved = 12;
   if (stringBacked.length > MAX_EVIDENCE - reserved) truncatedRetrieval = true;
-  const registry = new EvidenceRegistry(MAX_EVIDENCE);
+  const registry = new EvidenceRegistry(MAX_EVIDENCE, files);
   registry.refill([
     ...relationshipBacked,
     ...stringBacked.slice(
@@ -225,7 +225,12 @@ export function collectEvidence(
       filePath: hit.path,
       startLine: hit.startLine,
       endLine: hit.endLine,
-      snippet: `${hit.name ?? hit.path} (${hit.kind ?? "file"}); lexical match`,
+      snippet: registry.verbatimSnippet(
+        hit.path,
+        hit.startLine,
+        hit.endLine,
+        `${hit.name ?? hit.path} (${hit.kind ?? "file"}); lexical match`,
+      ),
     });
   }
   // Ranked symbol and route candidates give general questions ("what does
@@ -240,7 +245,12 @@ export function collectEvidence(
         filePath: candidate.node.path,
         startLine: candidate.node.startLine ?? 1,
         endLine: candidate.node.endLine ?? candidate.node.startLine ?? 1,
-        snippet: `${candidate.node.name ?? candidate.node.path} (${candidate.node.kind ?? "file"}); matched: ${candidate.signals.join(", ")}`,
+        snippet: registry.verbatimSnippet(
+          candidate.node.path,
+          candidate.node.startLine ?? 1,
+          candidate.node.endLine ?? candidate.node.startLine ?? 1,
+          `${candidate.node.name ?? candidate.node.path} (${candidate.node.kind ?? "file"}); matched: ${candidate.signals.join(", ")}`,
+        ),
       }) === false
     )
       break;
@@ -270,7 +280,12 @@ export function collectEvidence(
             filePath: target.path,
             startLine: target.startLine ?? 1,
             endLine: target.endLine ?? target.startLine ?? 1,
-            snippet: `${target.name ?? target.path} (${target.kind}); related operation of ${candidate.node.name ?? candidate.node.path}`,
+            snippet: registry.verbatimSnippet(
+              target.path,
+              target.startLine ?? 1,
+              target.endLine ?? target.startLine ?? 1,
+              `${target.name ?? target.path} (${target.kind}); related operation of ${candidate.node.name ?? candidate.node.path}`,
+            ),
           }) === false
         )
           break;
@@ -374,7 +389,12 @@ export async function collectEvidenceHybrid(
       filePath: node.path,
       startLine: node.startLine ?? 1,
       endLine: node.endLine ?? node.startLine ?? 1,
-      snippet: `${node.name ?? node.path} (${node.kind ?? "file"}); hybrid match`,
+      snippet: base.registry.verbatimSnippet(
+        node.path,
+        node.startLine ?? 1,
+        node.endLine ?? node.startLine ?? 1,
+        `${node.name ?? node.path} (${node.kind ?? "file"}); hybrid match`,
+      ),
     });
   }
   return {

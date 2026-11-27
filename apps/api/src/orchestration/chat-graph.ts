@@ -31,8 +31,10 @@ import { ToolCallingModel } from "./chat-model";
 const MAX_EXPLORE_ROUNDS = 3;
 const MAX_TOOL_CALLS = 8;
 const CORRECTION_LIMIT = 1;
-const TIMEOUT_MS = 30_000;
-const TOTAL_TIMEOUT_MS = 120_000;
+// Bridge transports can take most of a minute per round on large
+// selections; the journey budget already runs at this scale.
+const TIMEOUT_MS = 60_000;
+const TOTAL_TIMEOUT_MS = 240_000;
 
 const ChatState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({

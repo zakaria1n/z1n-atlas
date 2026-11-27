@@ -234,12 +234,18 @@ export function registerToolResult(
   })();
   for (const node of entries) {
     const id = `node:${node.ref ?? `${node.path}#${node.line ?? 1}`}`;
+    const start = node.line ?? 1;
     registry.add({
       id,
       filePath: node.path,
-      startLine: node.line ?? 1,
-      endLine: node.line ?? 1,
-      snippet: nodeSummary(node),
+      startLine: start,
+      endLine: start,
+      snippet: registry.verbatimSnippet(
+        node.path,
+        start,
+        start,
+        nodeSummary(node),
+      ),
     });
   }
 }

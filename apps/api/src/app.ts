@@ -619,6 +619,10 @@ export async function createApp(
                 : 502;
         return reply.code(status).send({ error: error.message });
       }
+      process.stderr.write(
+        `AI chat failed: ${error instanceof Error ? error.message : "unknown error"}
+`,
+      );
       return reply
         .code(502)
         .send({ error: "The answer could not be generated. Try again." });

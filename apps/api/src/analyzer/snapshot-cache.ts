@@ -115,7 +115,7 @@ export function createSnapshotCache({ maxEntries = 3, ttlMs = 600_000 } = {}) {
               return index;
             },
           );
-          semanticPromise = attempt.catch((error): SemanticIndex => {
+          semanticPromise = attempt.catch((): SemanticIndex => {
             if (signal?.aborted) {
               semanticPromise = undefined;
               semanticStateValue = "idle";

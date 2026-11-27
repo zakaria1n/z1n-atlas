@@ -54,7 +54,6 @@ export function entryPointScores(
   graph: CodeGraph,
   adapter: GraphAdapter,
 ): EntryPoint[] {
-  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
   const scored: EntryPoint[] = [];
   let candidateCount = 0;
   for (const node of graph.nodes) {

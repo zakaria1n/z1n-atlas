@@ -16,6 +16,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored MIT library copies (graphology-layout-forceatlas2) loaded by
+    // the local /sigma-bench renderer benchmark; CJS require style is theirs.
+    "apps/web/public/sigma-bench/fa2-*.js",
     // Synthetic projects that exercise the analyzer, kept verbatim as test data.
     "fixtures/**",
   ]),
