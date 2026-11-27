@@ -12,6 +12,11 @@ import {
   createSemanticIndex,
   type SemanticIndex,
 } from "../evidence/semantic-index";
+import { createGraphAdapter, type GraphAdapter } from "../graph/adapter";
+import {
+  buildIntelligence,
+  type GraphIntelligence,
+} from "../graph/intelligence";
 
 type Source = { path: string; content: string };
 
@@ -27,6 +32,10 @@ export type RepositorySnapshot = {
   graph: CodeGraph;
   lexical: LexicalIndex;
   context: RepositoryContext;
+  /** Repository-scoped graphology adapter for graph algorithms. */
+  adapter: GraphAdapter;
+  /** Entry points, static processes and structural groupings. */
+  intelligence: GraphIntelligence;
   /**
    * Builds the semantic index on first use and caches it for the
    * snapshot's lifetime, so unchanged source is never re-embedded. A
@@ -70,12 +79,21 @@ export function createSnapshotCache({ maxEntries = 3, ttlMs = 600_000 } = {}) {
       if (existing) return existing.snapshot;
       while (entries.size >= maxEntries) remove(entries.keys().next().value!);
       let semanticPromise: Promise<SemanticIndex> | undefined;
+      const adapter = createGraphAdapter(graph);
+      const intelligence = buildIntelligence(graph, adapter);
       const snapshot: RepositorySnapshot = {
         identity: identity.slice(0, 32),
         files,
         graph,
         lexical: createLexicalIndex(files, graph),
-        context: buildRepositoryContext(identity.slice(0, 32), files, graph),
+        context: buildRepositoryContext(
+          identity.slice(0, 32),
+          files,
+          graph,
+          intelligence,
+        ),
+        adapter,
+        intelligence,
         ensureSemantic: () => {
           if (!semanticPromise)
             semanticPromise = createSemanticIndex(files, graph).catch(

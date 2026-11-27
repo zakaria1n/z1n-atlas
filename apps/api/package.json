@@ -18,10 +18,14 @@
     "@z1n/analysis-core": "workspace:*",
     "@z1n/contracts": "workspace:*",
     "fastify": "^5.12.8",
+    "graphology": "^0.26.0",
+    "graphology-components": "^1.5.4",
+    "graphology-shortest-path": "^2.1.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "graphology-types": "^0.24.8",
     "typescript": "^5"
   }
 }

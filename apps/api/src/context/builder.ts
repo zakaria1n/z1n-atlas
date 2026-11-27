@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { CodeGraph } from "@z1n/contracts";
 import { journeyKinds } from "../journey/journey-kinds";
+import type { GraphIntelligence } from "../graph/intelligence";
 
 type Source = { path: string; content: string };
 
@@ -104,6 +105,13 @@ export type RepositoryContext = {
     /** Structural inference from degree counts, not a business module. */
     hotspots: { name: string; path: string; kind: string; degree: number }[];
     folderTree: string;
+    /** Structural entry-point ranking, not proof anything runs. */
+    entryPoints: { name: string; path: string; score: number }[];
+    /** Bounded static call paths, never runtime traces. */
+    processes: { label: string; steps: number }[];
+    processTruncated: boolean;
+    /** Connected components over relationship edges. */
+    communities: { size: number }[];
   };
   limitations: string[];
 };
@@ -112,6 +120,7 @@ export function buildRepositoryContext(
   identity: string,
   files: Source[],
   graph: CodeGraph,
+  intelligence?: GraphIntelligence,
 ): RepositoryContext {
   const analyzedFiles = new Set(
     graph.nodes
@@ -206,12 +215,34 @@ export function buildRepositoryContext(
       truncatedRoutes,
       routeHandlers,
     },
-    heuristics: { hotspots, folderTree },
+    heuristics: {
+      hotspots,
+      folderTree,
+      entryPoints: (intelligence?.entryPoints ?? [])
+        .slice(0, 6)
+        .map((entry) => {
+          const node = graph.nodes.find((item) => item.id === entry.nodeId);
+          return {
+            name: node?.name ?? entry.nodeId,
+            path: node?.path ?? "",
+            score: Math.round(entry.score * 100) / 100,
+          };
+        }),
+      processes: (intelligence?.processes ?? []).slice(0, 6).map((process) => ({
+        label: process.label,
+        steps: process.nodeIds.length,
+      })),
+      processTruncated: intelligence?.truncatedProcesses ?? false,
+      communities: (intelligence?.communities ?? [])
+        .slice(0, 8)
+        .map((component) => ({ size: component.length })),
+    },
     limitations: [
       "Relationships come from static analysis of the selected files and are not runtime traces.",
       `Coverage: ${analyzedFiles} of ${files.length} selected files produced symbols; unresolved calls: ${graph.unresolvedCalls}.`,
       "Framework names come from package manifests and prove declarations, not usage.",
       "Hotspots are degree-ranked structural inferences, not confirmed business modules.",
+      "Entry points and processes are static structural suggestions, never runtime execution traces.",
     ],
   };
 }
@@ -225,6 +256,9 @@ export function contextOverview(context: RepositoryContext): string {
     `Frameworks (from manifests): ${fact.frameworks.join(", ") || "none detected"}. Manifests: ${fact.manifests.join(", ") || "none"}.`,
     `Routes (${fact.routes.length}${fact.truncatedRoutes ? "+, truncated" : ""}): ${fact.routes.join(", ") || "none"}.`,
     `STRUCTURAL INFERENCES (degree-ranked, not runtime proof): ${context.heuristics.hotspots.map((hotspot) => `${hotspot.name} [${hotspot.kind}, ${hotspot.degree} connections]`).join(", ") || "none"}.`,
+    `ENTRY POINTS (structural ranking, heuristic): ${context.heuristics.entryPoints.map((entry) => `${entry.name} [score ${entry.score}]`).join(", ") || "none"}.`,
+    `STATIC PROCESSES (bounded call paths, NOT runtime traces${context.heuristics.processTruncated ? ", truncated" : ""}): ${context.heuristics.processes.map((process) => `${process.label} (${process.steps} steps)`).join(" | ") || "none"}.`,
+    `STRUCTURAL GROUPINGS (connected components): ${context.heuristics.communities.map((group) => group.size).join(", ") || "none"} symbols per group.`,
     `LIMITATIONS: ${context.limitations.join(" ")}`,
   ].join("\n");
 }
