@@ -52,8 +52,12 @@ function prismaClient(
   }
   return null;
 }
-/** Any `new PrismaClient(...)` construction inside a node's subtree. */
+/** Any `new PrismaClient(...)` construction in a node or its subtree. */
 function prismaConstructionIn(node: Node): Node | undefined {
+  // A concise arrow factory's body IS the construction itself, so the node
+  // itself is a candidate before its descendants.
+  if (Node.isNewExpression(node) && Node.isIdentifier(node.getExpression()))
+    return node.getExpression();
   for (const candidate of node.getDescendants()) {
     if (!Node.isNewExpression(candidate)) continue;
     if (Node.isIdentifier(candidate.getExpression()))

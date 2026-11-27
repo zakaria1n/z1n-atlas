@@ -59,3 +59,49 @@ describe("Prisma source evidence", () => {
     );
   });
 });
+
+describe("Prisma in monorepo selections with package aliases", () => {
+  it("resolves a package-level alias import to the singleton factory", async () => {
+    // Monorepo shape: the root tsconfig defines no aliases; the app's own
+    // tsconfig maps "@/lib/*". The prisma singleton sits behind a logical
+    // expression (`global.prisma ?? factory()`), as real apps ship it.
+    const files = [
+      {
+        path: "tsconfig.json",
+        content: '{"compilerOptions":{"moduleResolution":"bundler"}}',
+      },
+      {
+        path: "apps/web/tsconfig.json",
+        content:
+          '{"compilerOptions":{"baseUrl":".","paths":{"@/lib/*":["lib/*"]}}}',
+      },
+      {
+        path: "apps/web/lib/prisma.ts",
+        content:
+          'import {PrismaClient} from "@prisma/client";\n' +
+          "const prismaClientSingleton = () => new PrismaClient({log: []});\n" +
+          "declare global { var prisma: unknown | undefined; }\n" +
+          "export const prisma = global.prisma ?? prismaClientSingleton();",
+      },
+      {
+        path: "apps/web/app/route.ts",
+        content:
+          'import {prisma} from "@/lib/prisma";\n' +
+          "export async function GET() {\n" +
+          "  const users = await prisma.user.findMany();\n" +
+          "  return Response.json(users);\n" +
+          "}",
+      },
+    ];
+    const graph = await analyzeFiles(files);
+    const edge = graph.edges.find((item) => item.kind === "database-access");
+    expect(graphIsValid(graph, files)).toBe(true);
+    expect(edge?.confidence).toBe("framework");
+    expect(graph.nodes.find((node) => node.id === edge?.target)?.name).toBe(
+      "Prisma user.findMany",
+    );
+    expect(graph.nodes.find((node) => node.id === edge?.source)?.name).toBe(
+      "GET",
+    );
+  });
+});
