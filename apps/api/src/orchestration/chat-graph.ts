@@ -73,6 +73,8 @@ export type ChatGraphInput = {
   graph: CodeGraph;
   model: ToolCallingModel;
   history?: { role: "user" | "assistant"; text: string }[];
+  /** Repository-scoped lexical index from the snapshot cache, when available. */
+  lexical?: import("../evidence/lexical-index").LexicalIndex;
   signal?: AbortSignal;
 };
 
@@ -95,13 +97,14 @@ const callIdentity = (name: string, args: unknown): string =>
 export async function answerWithGraph(
   input: ChatGraphInput,
 ): Promise<ChatAnswer> {
-  const { question, files, graph, model, history, signal } = input;
+  const { question, files, graph, model, history, signal, lexical } = input;
   const terms = retrievalTerms(question, history);
   const { registry, truncatedRetrieval } = collectEvidence(
     question,
     files,
     graph,
     history,
+    lexical,
   );
   // Genuinely empty requests — no usable term at all — abstain without a
   // model call. A meaningful question with an empty initial search is not

@@ -6,7 +6,7 @@ import {
 } from "@z1n/contracts";
 import { createEvidenceTools } from "./tools";
 import { EvidenceRegistry } from "./registry";
-import { createLexicalIndex } from "./lexical-index";
+import { createLexicalIndex, type LexicalIndex } from "./lexical-index";
 import { discoverCandidates } from "../journey/discovery";
 
 type Source = { path: string; content: string };
@@ -132,6 +132,7 @@ export function collectEvidence(
   files: Source[],
   graph: CodeGraph,
   history: { role: "user" | "assistant"; text: string }[] = [],
+  lexical?: LexicalIndex,
 ): { registry: EvidenceRegistry; truncatedRetrieval: boolean } {
   const tools = createEvidenceTools(files, graph);
   const terms = retrievalTerms(question, history);
@@ -213,9 +214,10 @@ export function collectEvidence(
   ]);
   // Indexed lexical retrieval ranks symbols for the whole question in one
   // query (benchmarked ahead of the per-term scans it complements), so
-  // keyword and general questions receive concrete anchors first.
-  const lexical = createLexicalIndex(files, graph);
-  for (const hit of lexical.search(terms.join(" "), 6)) {
+  // keyword and general questions receive concrete anchors first. The
+  // index comes from the repository-scoped snapshot cache when available.
+  const index = lexical ?? createLexicalIndex(files, graph);
+  for (const hit of index.search(terms.join(" "), 6)) {
     registry.add({
       id: `node:${hit.nodeId}`,
       filePath: hit.path,

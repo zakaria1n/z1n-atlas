@@ -39,6 +39,7 @@ import { runJourneyAgent } from "./orchestration/journey-graph";
 import { findJourney } from "./journey/find-journey";
 import { runAnalysis, AnalysisError } from "./analyzer/run-analysis";
 import { createAnalysisCache } from "./analyzer/analysis-cache";
+import { createSnapshotCache } from "./analyzer/snapshot-cache";
 import { createAnalysisJobs } from "./analyzer/analysis-jobs";
 import { MAX_GRAPH_BYTES } from "./analyzer/limits";
 import { serverAiCredential, type ServerAiCredential } from "./config";
@@ -193,10 +194,12 @@ export async function createApp(
     requestTimeout: 45_000,
   });
   const analysisCache = createAnalysisCache();
+  const snapshots = createSnapshotCache();
   const analysisJobs = createAnalysisJobs();
   app.addHook("onClose", async () => {
     analysisJobs.clear();
     analysisCache.clear();
+    snapshots.clear();
   });
   await app.register(cors, {
     origin: webOrigin,
@@ -568,6 +571,9 @@ export async function createApp(
         graph,
         model,
         history: input.data.history ?? [],
+        // Repository-scoped indexes are built once per snapshot and reused
+        // across requests for the same selection.
+        lexical: snapshots.obtain(files, graph).lexical,
         signal: abort.signal,
       });
       return chatAnswerSchema.parse(answer);
