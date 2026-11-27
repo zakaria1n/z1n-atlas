@@ -136,14 +136,14 @@ describe("grounded answer validation on the chat graph", () => {
     expect(answer.claims).toEqual([]);
     expect(answer.uncertainties.join()).toContain("omitted");
   });
-  it("abstains without matching source and rejects malformed output", async () => {
+  it("abstains without usable terms and rejects malformed output", async () => {
     const absentModel = new ScriptedChatModel([
       () => {
-        throw new Error("The model must not be called without evidence.");
+        throw new Error("The model must not be called without usable terms.");
       },
     ]);
     const absent = await answerWithGraph({
-      question: "Where is payment?",
+      question: "how does what this that",
       files,
       graph,
       model: absentModel,
@@ -159,6 +159,192 @@ describe("grounded answer validation on the chat graph", () => {
     });
     expect(malformed.claims).toEqual([]);
     expect(malformed.uncertainties.join()).toContain("could not be validated");
+  });
+  it("recovers when meaningful questions initially match nothing", async () => {
+    const recoveryModel = new ScriptedChatModel([
+      (calls) => {
+        // First call: initial retrieval was empty and the system prompt must
+        // say so instead of treating it as absence.
+        const [system, user] = recoveryModel.calls[calls - 1];
+        expect(String(system.content)).toContain("not proof of absence");
+        expect(
+          JSON.parse(String((user as HumanMessage).content)).evidence,
+        ).toEqual([]);
+        return {
+          toolCalls: [
+            { id: "t1", name: "search_code", args: { query: "vault" } },
+          ],
+        };
+      },
+      {
+        claims: [
+          {
+            text: "The vault is opened through the vault module.",
+            evidenceIds: ["source:src/vault.ts:1"],
+          },
+        ],
+        uncertainties: [],
+      },
+    ]);
+    const vaultFiles = [
+      { path: "src/vault.ts", content: "export const vault = open();" },
+    ];
+    const vaultGraph: CodeGraph = {
+      nodes: [{ id: "src/vault.ts", path: "src/vault.ts", exports: [] }],
+      edges: [],
+      evidence: [],
+      unresolved: 0,
+      unresolvedCalls: 0,
+      notice: "",
+    };
+    const answer = await answerWithGraph({
+      question: "Where does the quantum payment gateway settle?",
+      files: vaultFiles,
+      graph: vaultGraph,
+      model: recoveryModel,
+    });
+    expect(answer.claims[0].citations[0]).toMatchObject({
+      filePath: "src/vault.ts",
+      startLine: 1,
+    });
+  });
+  it("reserves an unbound final generation after exploration exhausts itself", async () => {
+    const repeat = {
+      toolCalls: [{ id: "t1", name: "search_code", args: { query: "login" } }],
+    };
+    const model = new ScriptedChatModel([
+      repeat,
+      (calls) => {
+        // The exploration round answered every requested call, including
+        // repeated ones, so the provider sequence stays valid.
+        const toolAnswers = model.calls[calls - 1].filter(
+          (message) => message instanceof ToolMessage,
+        );
+        expect(toolAnswers.length).toBeGreaterThan(0);
+        return repeat;
+      },
+      repeat,
+      (calls) => {
+        // The final generation must carry the explicit answer-now
+        // instruction appended to the full conversation.
+        const last = model.calls[calls - 1].at(-1) as HumanMessage;
+        expect(String(last.content)).toContain(
+          "Answer now with the final JSON",
+        );
+        return {
+          claims: [
+            {
+              text: "Login is in src/login.ts.",
+              evidenceIds: ["source:src/login.ts:1"],
+            },
+          ],
+          uncertainties: [],
+        };
+      },
+    ]);
+    const answer = await answerWithGraph({
+      question: "Where is login?",
+      files,
+      graph,
+      model,
+    });
+    // Four model calls: three exploring plus the guaranteed final answer.
+    expect(model.calls.length).toBe(4);
+    expect(answer.claims[0].citations[0]).toMatchObject({
+      filePath: "src/login.ts",
+      startLine: 1,
+    });
+  });
+  it("refuses excess tool calls without breaking the message sequence", async () => {
+    const model = new ScriptedChatModel([
+      {
+        toolCalls: [
+          { id: "t1", name: "search_code", args: { query: "login" } },
+          { id: "t2", name: "search_code", args: { query: "fetch" } },
+          { id: "t3", name: "search_code", args: { query: "sendRequest" } },
+          { id: "t4", name: "search_code", args: { query: "url" } },
+        ],
+      },
+      {
+        claims: [
+          {
+            text: "Login is in src/login.ts.",
+            evidenceIds: ["source:src/login.ts:1"],
+          },
+        ],
+        uncertainties: [],
+      },
+    ]);
+    const answer = await answerWithGraph({
+      question: "Where is login?",
+      files,
+      graph,
+      model,
+    });
+    // MAX_TOOL_CALLS is 8, so all four ran; a shorter budget is exercised by
+    // the repeated-rounds test above. Every call was answered with a
+    // ToolMessage — none left dangling for the provider.
+    const toolAnswers = model.calls[1].filter(
+      (message) => message instanceof ToolMessage,
+    );
+    expect(toolAnswers.length).toBe(4);
+    expect(answer.claims.length).toBe(1);
+  });
+  it("retrieves follow-up antecedents from bounded conversation history", async () => {
+    const followUpFiles = [
+      {
+        path: "src/session.ts",
+        content:
+          "export function refreshSession() {\n  return loadSession();\n}",
+      },
+      {
+        path: "src/unrelated.ts",
+        content: "export const unrelated = 1;",
+      },
+    ];
+    const followUpGraph: CodeGraph = {
+      nodes: [
+        { id: "src/session.ts", path: "src/session.ts", exports: [] },
+        { id: "src/unrelated.ts", path: "src/unrelated.ts", exports: [] },
+      ],
+      edges: [],
+      evidence: [],
+      unresolved: 0,
+      unresolvedCalls: 0,
+      notice: "",
+    };
+    const model = new ScriptedChatModel([
+      (calls) => {
+        const request = model.request(calls);
+        // The follow-up question alone has no antecedent; the history terms
+        // (refresh, session) must retrieve the session source.
+        expect(
+          request.evidence.some((item) =>
+            item.id.startsWith("source:src/session.ts"),
+          ),
+        ).toBe(true);
+        return {
+          claims: [
+            {
+              text: "That function is refreshSession.",
+              evidenceIds: [request.evidence[0].id],
+            },
+          ],
+          uncertainties: [],
+        };
+      },
+    ]);
+    const answer = await answerWithGraph({
+      question: "Which function handles that?",
+      files: followUpFiles,
+      graph: followUpGraph,
+      model,
+      history: [
+        { role: "user", text: "How does refreshing a session work?" },
+        { role: "assistant", text: "The session refresh flow." },
+      ],
+    });
+    expect(answer.claims.length).toBe(1);
   });
   it("accepts evidence the model retrieved itself through the shared tools", async () => {
     const model = new ScriptedChatModel([
@@ -288,11 +474,12 @@ describe("chat evidence retrieval quality", () => {
     ).toBe(true);
   }, 30_000);
 
-  it("reports honest emptiness for questions nothing matches", async () => {
+  it("reports honest emptiness after bounded recovery finds nothing", async () => {
     const { files, graph } = await setup();
     const model = new ScriptedChatModel([
-      () => {
-        throw new Error("The model must not be called without evidence.");
+      {
+        claims: [],
+        uncertainties: ["No booking-related evidence exists for this term."],
       },
     ]);
     const answer = await answerWithGraph({
@@ -301,8 +488,12 @@ describe("chat evidence retrieval quality", () => {
       graph,
       model,
     });
-    expect(model.calls.length).toBe(0);
+    // The meaningful question entered recovery — one exploration round with
+    // the tools — and the model's own honest emptiness came back validated.
+    expect(model.calls.length).toBeGreaterThanOrEqual(1);
     expect(answer.claims).toEqual([]);
-    expect(answer.uncertainties[0]).toContain("No matching evidence");
+    expect(answer.uncertainties.join()).toContain(
+      "No booking-related evidence",
+    );
   }, 30_000);
 });

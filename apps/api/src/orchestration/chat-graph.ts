@@ -16,15 +16,17 @@ import {
   collectEvidence,
   buildChatAnswer,
   parseChatDraft,
+  retrievalTerms,
   SYSTEM_INSTRUCTIONS,
 } from "../evidence/answer";
 import { registerToolResult } from "../evidence/tool-registration";
 import { ToolCallingModel } from "./chat-model";
 
-// Simple questions finish in one call; exploration is bounded so a chat
-// answer can never wander: three tool rounds plus the final answer round,
-// eight tool calls, one correction, all inside one overall wall clock.
-const MAX_ROUNDS = 4;
+// Deterministic budgets: at most three exploration rounds with tools, eight
+// tool calls, and — regardless of how the exploration ends — a reserved
+// final generation round on the unbound model plus one bounded correction.
+// Everything runs inside one overall wall clock.
+const MAX_EXPLORE_ROUNDS = 3;
 const MAX_TOOL_CALLS = 8;
 const CORRECTION_LIMIT = 1;
 const TIMEOUT_MS = 30_000;
@@ -47,6 +49,14 @@ const ChatState = Annotation.Root({
     reducer: (_left, right) => right,
     default: () => 0,
   }),
+  seenCalls: Annotation<string[]>({
+    reducer: (_left, right) => right,
+    default: () => [],
+  }),
+  lastRoundUseful: Annotation<boolean>({
+    reducer: (_left, right) => right,
+    default: () => true,
+  }),
   result: Annotation<ChatAnswer | undefined>({
     reducer: (_left, right) => right,
     default: () => undefined,
@@ -66,27 +76,43 @@ export type ChatGraphInput = {
   signal?: AbortSignal;
 };
 
+const callIdentity = (name: string, args: unknown): string =>
+  `${name}:${JSON.stringify(
+    args && typeof args === "object" && !Array.isArray(args)
+      ? Object.entries(args as Record<string, unknown>).sort(([a], [b]) =>
+          a.localeCompare(b),
+        )
+      : (args ?? {}),
+  )}`;
+
 /**
  * The chat answer as an explicit state graph over the shared evidence
- * registry: deterministic retrieval first, then bounded model exploration
- * through the same read-only tools the journey uses, then claim-level
- * citation validation against the registry alone.
+ * registry: explore with the tool-bound model, execute and register every
+ * tool answer, evaluate whether the investigation is still productive,
+ * then a guaranteed final generation on the unbound model, claim-level
+ * citation validation, bounded correction, finish.
  */
 export async function answerWithGraph(
   input: ChatGraphInput,
 ): Promise<ChatAnswer> {
   const { question, files, graph, model, history, signal } = input;
+  const terms = retrievalTerms(question, history);
   const { registry, truncatedRetrieval } = collectEvidence(
     question,
     files,
     graph,
+    history,
   );
-  // Nothing matches: an honest abstention without spending a model call.
-  if (!registry.size)
+  // Genuinely empty requests — no usable term at all — abstain without a
+  // model call. A meaningful question with an empty initial search is not
+  // evidence of absence: it enters the graph so the model can reformulate
+  // and investigate with the tools.
+  if (!registry.size && !terms.length)
     return {
       claims: [],
       uncertainties: ["No matching evidence was found in the selected files."],
     };
+  const recovery = !registry.size;
   const tools = createJourneyTools(files, graph);
   const boundModel = model.bindTools(tools.definitions);
   const totalTimeout = AbortSignal.timeout(TOTAL_TIMEOUT_MS);
@@ -106,14 +132,45 @@ export async function answerWithGraph(
 
   const execute = (state: typeof ChatState.State) => {
     const last = state.messages.at(-1) as AIMessage;
-    const remaining = Math.max(0, MAX_TOOL_CALLS - state.toolCallsUsed);
-    const calls = (last.tool_calls ?? []).slice(0, remaining);
+    const calls = last.tool_calls ?? [];
+    // Every requested call gets an answer — executed ones their result,
+    // excess ones an explicit refusal — so the provider message sequence
+    // stays valid no matter how the budget truncates.
     const answers: BaseMessage[] = [];
+    const seen = new Set(state.seenCalls);
+    let newCalls = 0;
+    let answered = 0;
     for (const call of calls) {
-      const result = tools.execute({
-        name: call.name,
-        arguments: JSON.stringify(call.args ?? {}),
-      });
+      const identity = callIdentity(call.name, call.args);
+      const withinBudget = answered < MAX_TOOL_CALLS - state.toolCallsUsed;
+      if (!withinBudget) {
+        answers.push(
+          new ToolMessage({
+            tool_call_id: call.id ?? call.name,
+            name: call.name,
+            content: JSON.stringify({
+              notice: "The tool budget is used up; this call was not run.",
+            }),
+          }),
+        );
+        continue;
+      }
+      answered += 1;
+      const repeated = seen.has(identity);
+      seen.add(identity);
+      if (!repeated) newCalls += 1;
+      const result = repeated
+        ? {
+            name: call.name,
+            output: JSON.stringify({
+              notice:
+                "This tool call was already answered; use the earlier result.",
+            }),
+          }
+        : tools.execute({
+            name: call.name,
+            arguments: JSON.stringify(call.args ?? {}),
+          });
       // Everything the model just saw becomes citable evidence.
       registerToolResult(
         registry,
@@ -128,18 +185,43 @@ export async function answerWithGraph(
         }),
       );
     }
-    const toolCallsUsed = state.toolCallsUsed + calls.length;
-    const messages: BaseMessage[] = answers;
-    if (toolCallsUsed >= MAX_TOOL_CALLS)
-      messages.push(
-        new HumanMessage(
-          "The tool budget is used up. Answer now with the final JSON and no tool calls.",
-        ),
-      );
-    return { messages, toolCallsUsed };
+    return {
+      messages: answers,
+      toolCallsUsed: state.toolCallsUsed + answered,
+      seenCalls: [...seen],
+      lastRoundUseful: newCalls > 0,
+    };
   };
 
-  const check = (state: typeof ChatState.State) => {
+  const evaluate = (state: typeof ChatState.State) => {
+    // Continue investigating only while rounds, tool budget and novelty all
+    // allow it; otherwise the reserved final generation must start.
+    const canExplore =
+      state.rounds < MAX_EXPLORE_ROUNDS &&
+      state.toolCallsUsed < MAX_TOOL_CALLS &&
+      state.lastRoundUseful;
+    if (canExplore) return "explore";
+    return "generate";
+  };
+
+  const generate = async (state: typeof ChatState.State) => {
+    // Final generation happens on the unbound model: no tools are offered,
+    // so the last round can never be consumed by another tool request.
+    const answer = await model.invoke(
+      [
+        ...state.messages,
+        new HumanMessage(
+          recovery
+            ? "Answer now with the final JSON and no tool calls. If the tools found nothing citable, return claims: [] and say in uncertainties what was searched and remains unknown."
+            : "Answer now with the final JSON and no tool calls.",
+        ),
+      ],
+      { signal: callSignal() },
+    );
+    return { messages: [answer] };
+  };
+
+  const validate = (state: typeof ChatState.State) => {
     const last = state.messages.at(-1) as AIMessage;
     const parsed = parseChatDraft(last.text);
     if ("error" in parsed) {
@@ -179,40 +261,45 @@ export async function answerWithGraph(
   const workflow = new StateGraph(ChatState)
     .addNode("explore", explore)
     .addNode("execute", execute)
-    .addNode("check", check)
+    .addNode("generate", generate)
+    .addNode("validate", validate)
     .addNode("finalize", finalize)
     .addEdge(START, "explore")
     .addConditionalEdges("explore", (state: typeof ChatState.State) => {
       const last = state.messages.at(-1);
       const toolCalls =
         last instanceof AIMessage ? (last.tool_calls ?? []) : [];
-      return toolCalls.length ? "execute" : "check";
+      return toolCalls.length ? "execute" : "validate";
     })
     .addConditionalEdges("execute", (state: typeof ChatState.State) =>
-      state.rounds >= MAX_ROUNDS ? END : "explore",
+      evaluate(state),
     )
-    .addConditionalEdges("check", (state: typeof ChatState.State) => {
+    .addEdge("generate", "validate")
+    .addConditionalEdges("validate", (state: typeof ChatState.State) => {
       if (state.result || state.failure) return "finalize";
-      return state.rounds >= MAX_ROUNDS ? END : "explore";
+      return "generate";
     })
     .addEdge("finalize", END)
     .compile();
 
+  const opening = [
+    new SystemMessage(
+      recovery
+        ? `${SYSTEM_INSTRUCTIONS} The initial retrieval found no matching evidence for the question. That is not proof of absence: reformulate the question (synonyms, identifiers, related concepts) and use the search tools to investigate the selection before answering.`
+        : SYSTEM_INSTRUCTIONS,
+    ),
+    new HumanMessage(
+      JSON.stringify({
+        question,
+        history: history ?? [],
+        evidence: registry.list(),
+      }),
+    ),
+  ];
   const state = await workflow.invoke(
+    { messages: opening },
     {
-      messages: [
-        new SystemMessage(SYSTEM_INSTRUCTIONS),
-        new HumanMessage(
-          JSON.stringify({
-            question,
-            history: history ?? [],
-            evidence: registry.list(),
-          }),
-        ),
-      ],
-    },
-    {
-      recursionLimit: MAX_ROUNDS * 2 + 8,
+      recursionLimit: MAX_EXPLORE_ROUNDS * 2 + CORRECTION_LIMIT * 2 + 8,
       signal: AbortSignal.any([totalTimeout, ...(signal ? [signal] : [])]),
     },
   );
@@ -221,7 +308,9 @@ export async function answerWithGraph(
     claims: [],
     uncertainties: [
       state.failure ??
-        "The answer could not be validated; only verified evidence is reported.",
+        (recovery
+          ? "No matching evidence was found in the selected files."
+          : "The answer could not be validated; only verified evidence is reported."),
     ],
   });
 }

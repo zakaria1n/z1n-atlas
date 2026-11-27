@@ -66,6 +66,61 @@ export function parseChatDraft(
   }
 }
 
+const STOP_TERMS = new Set([
+  "the",
+  "and",
+  "how",
+  "does",
+  "what",
+  "where",
+  "this",
+  "that",
+  "with",
+  "from",
+  "when",
+  "which",
+  "into",
+  "onto",
+  "per",
+  "for",
+  "was",
+  "is",
+  "are",
+  "of",
+  "in",
+  "on",
+  "to",
+  "it",
+  "its",
+]);
+
+/**
+ * Retrieval terms for a question: the question's own words first, then a
+ * bounded contribution from the most recent user turns of the conversation
+ * so follow-ups ("which function handles that?") retrieve their
+ * antecedents. Assistant text is never used: prior statements are not
+ * source evidence. Everything is resolved against the current snapshot
+ * only — nothing crosses repository boundaries because nothing persists
+ * between requests.
+ */
+export function retrievalTerms(
+  question: string,
+  history: { role: "user" | "assistant"; text: string }[] = [],
+): string[] {
+  const questionTerms = [
+    ...new Set(question.toLowerCase().match(/[a-z_$][a-z0-9_$.-]{2,}/g) ?? []),
+  ].filter((term) => !STOP_TERMS.has(term));
+  const historyTerms = history
+    .filter((turn) => turn.role === "user")
+    .slice(-2)
+    .flatMap((turn) =>
+      (turn.text.toLowerCase().match(/[a-z_$][a-z0-9_$.-]{2,}/g) ?? []).filter(
+        (term) => !STOP_TERMS.has(term),
+      ),
+    );
+  return [...new Set([...questionTerms, ...historyTerms])].slice(0, 12);
+}
+
 /**
  * The deterministic retrieval every chat answer starts from: literal term
  * matches, relationship-backed graph evidence, and the same ranked symbol
@@ -76,27 +131,10 @@ export function collectEvidence(
   question: string,
   files: Source[],
   graph: CodeGraph,
+  history: { role: "user" | "assistant"; text: string }[] = [],
 ): { registry: EvidenceRegistry; truncatedRetrieval: boolean } {
   const tools = createEvidenceTools(files, graph);
-  const terms = [
-    ...new Set(question.toLowerCase().match(/[a-z_$][a-z0-9_$.-]{2,}/g) ?? []),
-  ]
-    .filter(
-      (term) =>
-        ![
-          "the",
-          "and",
-          "how",
-          "does",
-          "what",
-          "where",
-          "this",
-          "that",
-          "with",
-          "from",
-        ].includes(term),
-    )
-    .slice(0, 8);
+  const terms = retrievalTerms(question, history);
   // Collection runs unbounded; the model-facing budget is enforced by the
   // refill policy below and by the capped registry the discovery phase adds
   // into, so truncation is reported exactly when items were dropped.
@@ -177,7 +215,7 @@ export function collectEvidence(
   // query (benchmarked ahead of the per-term scans it complements), so
   // keyword and general questions receive concrete anchors first.
   const lexical = createLexicalIndex(files, graph);
-  for (const hit of lexical.search(question, 6)) {
+  for (const hit of lexical.search(terms.join(" "), 6)) {
     registry.add({
       id: `node:${hit.nodeId}`,
       filePath: hit.path,
