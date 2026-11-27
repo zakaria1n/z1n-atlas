@@ -167,7 +167,7 @@ export async function answerWithGraph(
     return { messages: [response], rounds: state.rounds + 1 };
   };
 
-  const execute = (state: typeof ChatState.State) => {
+  const execute = async (state: typeof ChatState.State) => {
     const last = state.messages.at(-1) as AIMessage;
     const calls = last.tool_calls ?? [];
     // Every requested call gets an answer — executed ones their result,
@@ -204,7 +204,7 @@ export async function answerWithGraph(
                 "This tool call was already answered; use the earlier result.",
             }),
           }
-        : tools.execute({
+        : await tools.execute({
             name: call.name,
             arguments: JSON.stringify(call.args ?? {}),
           });

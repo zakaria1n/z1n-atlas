@@ -652,6 +652,18 @@ export async function createApp(
       // Repository-scoped snapshot: indexes and context are built once per
       // selection and reused across chat and journey requests.
       const snapshot = snapshots.obtain(input.data.files, graph);
+      let semantic:
+        import("./evidence/semantic-index").SemanticIndex | undefined;
+      if (semanticRetrievalEnabled()) {
+        const result = await Promise.race([
+          snapshot.ensureSemantic(),
+          new Promise<"timeout">((resolve) => {
+            const timer = setTimeout(() => resolve("timeout"), 15_000);
+            timer.unref();
+          }),
+        ]);
+        if (result !== "timeout") semantic = result;
+      }
       const resolved = resolveAiCredential(input.data);
       // Development-only external model bridge: the same runJourneyAgent
       // graph, tools and validation run unchanged; only the model transport
@@ -670,6 +682,7 @@ export async function createApp(
           graph,
           model: new DevBridgeChatModel(await externalDevAgentGenerate()),
           context: snapshot.context,
+          semantic,
           signal: abort.signal,
           maxRounds: Number(process.env.Z1N_JOURNEY_MAX_ROUNDS ?? 6),
           maxToolCalls: Number(process.env.Z1N_JOURNEY_MAX_TOOL_CALLS ?? 18),
@@ -696,6 +709,7 @@ export async function createApp(
           graph,
           model: createChatModel({ ...credential, maxOutputTokens: 1600 }),
           context: snapshot.context,
+          semantic,
           signal: abort.signal,
           maxRounds: Number(process.env.Z1N_JOURNEY_MAX_ROUNDS ?? 6),
           maxToolCalls: Number(process.env.Z1N_JOURNEY_MAX_TOOL_CALLS ?? 18),

@@ -9,6 +9,7 @@ import { createEvidenceTools } from "../evidence/tools";
 import { journeyKinds } from "./journey-kinds";
 import { discoverCandidates } from "./discovery";
 import { contextOverview, type RepositoryContext } from "../context/builder";
+import type { SemanticIndex } from "../evidence/semantic-index";
 
 type Source = { path: string; content: string };
 // Results are serialized into the model conversation, so each tool answer
@@ -40,11 +41,15 @@ export function createJourneyTools(
   files: Source[],
   graph: CodeGraph,
   context?: RepositoryContext,
+  semantic?: SemanticIndex,
 ) {
   analysisRequestSchema.parse({ files, origin: "github", consent: false });
   if (!graphIsValid(graph, files)) throw new Error("Invalid graph evidence.");
   const evidence = createEvidenceTools(files, graph);
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const fileLines = new Map(
+    files.map((file) => [file.path, file.content.split(/\r\n|\r|\n/)]),
+  );
   const references = new Map<string, string>();
   const nodeReferences = new Map<string, string>();
   const reference = (id: string) => {
@@ -63,6 +68,56 @@ export function createJourneyTools(
       : node.path;
   };
   const tools = {
+    ...(semantic?.available
+      ? {
+          semantic_search: (input: unknown) => {
+            const { query, offset } = z
+              .object({
+                query: z.string().trim().min(2).max(300),
+                offset: z.number().int().min(0).max(1000).optional(),
+              })
+              .strict()
+              .parse(input);
+            const start = offset ?? 0;
+            return semantic
+              .search(query, start + 5)
+              .then((hits) => hits.slice(start))
+              .then((hits) => ({
+                results: hits.map((hit) => {
+                  // Real source excerpts, not symbol summaries: the model
+                  // sees the actual lines the similarity matched.
+                  const lines = fileLines.get(hit.path);
+                  const excerpt = lines
+                    ? lines
+                        .slice(
+                          Math.max(0, hit.startLine - 1),
+                          Math.min(
+                            hit.endLine ?? hit.startLine,
+                            hit.startLine + 8,
+                          ),
+                        )
+                        .join("\n")
+                        .slice(0, 700)
+                    : hit.path;
+                  return {
+                    ref: reference(hit.nodeId),
+                    path: hit.path,
+                    name: hit.name,
+                    lines: [hit.startLine, hit.endLine],
+                    excerpt,
+                    similarity: Math.round(hit.score * 1000) / 1000,
+                  };
+                }),
+                scope:
+                  "Semantic similarity over analyzed symbols with real source excerpts; not literal string search. Matches are candidates.",
+                nextOffset:
+                  start + hits.length >= 5 && hits.length > 0
+                    ? start + hits.length
+                    : null,
+              }));
+          },
+        }
+      : {}),
     ...(context
       ? {
           repository_overview: () => ({
@@ -258,7 +313,7 @@ export function createJourneyTools(
     },
   };
   const definitions: JourneyToolDefinition[] = [
-    ...(context
+    ...(semantic?.available
       ? [
           {
             name: "repository_overview",
@@ -373,7 +428,7 @@ export function createJourneyTools(
   const registry = new Map(
     Object.entries(tools) as [string, (input: unknown) => unknown][],
   );
-  function execute(call: JourneyToolCall): JourneyToolResult {
+  async function execute(call: JourneyToolCall): Promise<JourneyToolResult> {
     const run = registry.get(call.name);
     if (!run)
       return {
@@ -387,7 +442,7 @@ export function createJourneyTools(
       return { name: call.name, output: "Arguments must be a JSON object." };
     }
     try {
-      const result = run(args);
+      const result = await run(args);
       let output = JSON.stringify(result);
       if (output.length > MAX_RESULT_CHARS)
         output = JSON.stringify({

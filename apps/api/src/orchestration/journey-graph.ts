@@ -73,6 +73,8 @@ export type JourneyGraphInput = {
   model: ToolCallingModel;
   /** Cached repository context enabling the repository_overview tool. */
   context?: import("../context/builder").RepositoryContext;
+  /** Optional local semantic index; when absent or unavailable, lexical only. */
+  semantic?: import("../evidence/semantic-index").SemanticIndex;
   signal?: AbortSignal;
   maxRounds?: number;
   maxToolCalls?: number;
@@ -122,7 +124,7 @@ export async function runJourneyAgent(
       return { messages: [response], rounds: state.rounds + 1 };
     };
 
-    const execute = (state: typeof JourneyState.State) => {
+    const execute = async (state: typeof JourneyState.State) => {
       const last = state.messages.at(-1) as AIMessage;
       const remaining = Math.max(0, maxToolCalls - state.toolCallsUsed);
       const calls = (last.tool_calls ?? []).slice(0, remaining);
@@ -140,7 +142,7 @@ export async function runJourneyAgent(
                   "This tool call was already answered; use the earlier result.",
               }),
             }
-          : tools.execute({
+          : await tools.execute({
               name: call.name,
               arguments: JSON.stringify(call.args ?? {}),
             });
