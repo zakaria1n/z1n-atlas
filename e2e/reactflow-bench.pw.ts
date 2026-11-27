@@ -7,7 +7,13 @@ import { expect, test } from "@playwright/test";
  */
 test.setTimeout(420_000);
 
-test("react flow: omnisport (desktop + mobile)", async ({ page }) => {
+// Desktop-only: the mobile workspace renders the graph behind a tab
+// switch; the Sigma harness already covers the mobile viewport directly.
+test.skip(
+  test.info().project.name !== "desktop",
+  "React Flow mobile rendering is covered by the mobile workspace e2e.",
+);
+test("react flow: omnisport (desktop)", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/import");
   await page
