@@ -2,10 +2,21 @@ import { describe, expect, it } from "vitest";
 import type { CodeGraph } from "@z1n/contracts";
 import { createSnapshotCache } from "./snapshot-cache";
 
-const filesA = [{ path: "a.ts", content: "export const a = 1;" }];
-const filesB = [{ path: "a.ts", content: "export const a = 2;" }];
+const filesA = [{ path: "a.ts", content: "export const alphaValue = 1;" }];
+const filesB = [{ path: "a.ts", content: "export const alphaValue = 2;" }];
 const graph: CodeGraph = {
-  nodes: [{ id: "a.ts", path: "a.ts", exports: [] }],
+  nodes: [
+    { id: "a.ts", path: "a.ts", exports: [] },
+    {
+      id: "a.ts#1",
+      path: "a.ts",
+      name: "alphaValue",
+      kind: "function",
+      startLine: 1,
+      endLine: 1,
+      exports: [],
+    },
+  ],
   edges: [],
   evidence: [],
   unresolved: 0,
@@ -20,7 +31,7 @@ describe("repository snapshot cache", () => {
     const second = cache.obtain(filesA, graph);
     expect(second).toBe(first);
     expect(cache.size).toBe(1);
-    expect(first.lexical.search("a", 5).length).toBeGreaterThan(0);
+    expect(first.lexical.search("alphaValue", 5).length).toBeGreaterThan(0);
   });
   it("builds a fresh snapshot when any source byte changes", () => {
     const cache = createSnapshotCache();
