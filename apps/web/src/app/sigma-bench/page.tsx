@@ -3,16 +3,13 @@
 /**
  * Sigma.js renderer benchmark — development harness, not a product page.
  *
- * Loads one of the recorded CodeGraph snapshots, adapts it to a graphology
- * multigraph (identities, kinds, confidence and parallel edges preserved),
- * seeds a synchronised layout, then runs a bounded ForceAtlas2 web-worker
- * layout and renders with Sigma.js. Exposes window.__bench metrics for the
- * Playwright benchmark and mirrors the reference renderer lifecycle: the
- * layout worker is stopped after its bounded budget and everything is
- * cleaned up when the page unloads.
+ * Measures the PRODUCTION renderer path end to end: the workspace's
+ * deterministic CodeGraph adapter, the real bundled FA2 web worker with its
+ * bounded budget, and the same graphology multigraph the workspace renders.
+ * Graph snapshots come from the dev-gated /sigma-bench/data route.
+ * Exposes window.__bench metrics for the Playwright benchmark.
  */
 import { useEffect, useRef, useState } from "react";
-import Graph from "graphology";
 
 type Bench = {
   webgl: boolean;
@@ -25,6 +22,7 @@ type Bench = {
   selectLatencyMs: number;
   eventsPerSecond: number;
   filterMs: number;
+  workerTerminated: boolean;
   memoryMb: number | null;
 };
 
@@ -47,6 +45,7 @@ export default function SigmaBenchPage() {
       selectLatencyMs: 0,
       eventsPerSecond: 0,
       filterMs: 0,
+      workerTerminated: false,
       memoryMb: null,
     };
 
@@ -63,92 +62,109 @@ export default function SigmaBenchPage() {
       (window as unknown as { __benchDone: boolean }).__benchDone = true;
       setTimeout(
         () =>
-          setStatus(
-            "WebGL unavailable — production falls back to React Flow.",
-          ),
+          setStatus("WebGL unavailable — production falls back to React Flow."),
         0,
       );
       return;
     }
 
     (async () => {
-      // Sigma touches browser globals at import time, so the renderer and
-      // its FA2 worker are imported inside the browser-only effect.
-      const { default: Sigma } = await import("sigma");
+      // Sigma touches browser globals at import time, so the renderer is
+      // imported inside the browser-only effect.
+      const { default: Sigma, DEFAULT_STYLES } = await import("sigma");
       const { default: forceAtlas2 } =
         await import("graphology-layout-forceatlas2");
-      const { loadFa2Supervisor } = await import("./fa2-supervisor-loader");
-      const ForceAtlas2Worker = await loadFa2Supervisor("/sigma-bench");
-      const data = await fetch(`/sigma-bench/graphs/${snapshot}.json`).then(
+      const { codeGraphToGraphology } =
+        await import("@/features/graph/renderer/adapter");
+      const { fa2Settings } =
+        await import("@/features/graph/renderer/fa2-settings");
+      const data = await fetch(`/sigma-bench/data/${snapshot}`).then(
         (response) => response.json(),
       );
       const tGraph = performance.now();
-      const graph = new Graph({ multi: true, type: "directed" });
-      for (const node of data.nodes)
-        if (!graph.hasNode(node.id))
-          graph.addNode(node.id, {
-            label: node.name ?? node.path.split("/").pop(),
-            x: Math.random(),
-            y: Math.random(),
-            size: node.kind === "route" ? 5 : node.kind ? 3 : 1.5,
-            kind: node.kind ?? "file",
-            path: node.path,
-          });
-      for (const edge of data.edges)
-        if (graph.hasNode(edge.source) && graph.hasNode(edge.target))
-          if (!graph.hasEdge(edge.id))
-            graph.addEdgeWithKey(edge.id, edge.source, edge.target, {
-              kind: edge.kind,
-              confidence: edge.confidence,
-            });
+      const graph = codeGraphToGraphology(data);
       bench.adapterMs = Math.round(performance.now() - tGraph);
       bench.nodes = graph.order;
       bench.edges = graph.size;
 
       const tLayout = performance.now();
       forceAtlas2.assign(graph, {
-        iterations: 30,
-        settings: forceAtlas2.inferSettings(graph),
+        iterations: graph.order > 2000 ? 10 : 30,
+        settings: fa2Settings(graph.order),
       });
       bench.seedLayoutMs = Math.round(performance.now() - tLayout);
 
       if (!container.current || killed) return;
-      // Harness options are passed loosely: sigma's generic attribute types
-      // are not worth modeling for a dev-only benchmark page.
-      const renderer = new Sigma(graph as never, container.current, {
-        renderEdgeLabels: false,
-        defaultEdgeColor: "#94a3b8",
-        defaultNodeColor: "#2563eb",
-        labelDensity: 0.4,
-        labelGridCellSize: 120,
-      } as never);
+      const renderer = new Sigma(graph, container.current, {
+        settings: {
+          renderEdgeLabels: false,
+          labelDensity: 0.4,
+          labelGridCellSize: 120,
+        },
+        styles: {
+          nodes: { ...DEFAULT_STYLES.nodes, labelColor: "#0f172a" },
+        },
+      });
 
-      // Bounded FA2 worker: first positions timestamp, stop after 2.5s —
-      // the worker is never left running (reference renderer lifecycle).
-      const fa2 = new ForceAtlas2Worker(graph, {
-        settings: forceAtlas2.inferSettings(graph),
+      // The production bounded FA2 worker, started exactly as the workspace
+      // starts it and terminated at the budget.
+      const worker = new Worker(
+        new URL("@/features/graph/renderer/fa2.worker.ts", import.meta.url),
+      );
+      const ids = graph.nodes();
+      const indexOf = new Map(ids.map((id, index) => [id, index]));
+      const positions = new Float32Array(graph.order * 2);
+      const sizes = new Float32Array(graph.order);
+      ids.forEach((id, index) => {
+        const attributes = graph.getNodeAttributes(id);
+        positions[index * 2] = attributes.x;
+        positions[index * 2 + 1] = attributes.y;
+        sizes[index] = attributes.size;
+      });
+      const edges = new Uint32Array(graph.size * 2);
+      let cursor = 0;
+      graph.forEachEdge((edge) => {
+        const [source, target] = graph.extremities(edge);
+        edges[cursor++] = indexOf.get(source) ?? 0;
+        edges[cursor++] = indexOf.get(target) ?? 0;
       });
       let firstPositionsAt: number | null = null;
-      const firstTickPoll = setInterval(() => {
-        if (fa2.isRunning() && firstPositionsAt === null) {
-          firstPositionsAt = performance.now();
-          bench.workerFirstTickMs = Math.round(firstPositionsAt - tLayout);
+      worker.onmessage = (event: MessageEvent) => {
+        const data = event.data as
+          { type: "tick"; positions: Float32Array } | { type: "done" };
+        if (data.type === "tick") {
+          if (firstPositionsAt === null) {
+            firstPositionsAt = performance.now();
+            bench.workerFirstTickMs = Math.round(firstPositionsAt - tLayout);
+          }
+          data.positions.forEach((value, index) => {
+            const id = ids[Math.floor(index / 2)];
+            if (id)
+              graph.setNodeAttribute(id, index % 2 === 0 ? "x" : "y", value);
+          });
+          renderer.refresh();
+        } else {
+          worker.terminate();
+          bench.workerTerminated = true;
         }
-      }, 50);
-      fa2.start();
-      setTimeout(() => {
-        clearInterval(firstTickPoll);
-        fa2.stop();
-      }, 2500);
+      };
+      const tWorkerStart = performance.now();
+      worker.postMessage({
+        type: "start",
+        ids,
+        edges,
+        positions,
+        sizes,
+        settings: fa2Settings(graph.order),
+        budgetMs: 2500,
+        chunkIterations: 8,
+      });
+      void tWorkerStart;
 
       // First meaningful render: sigma's own first afterRender event.
       const tRender = performance.now();
       await new Promise<void>((resolve) => {
-        (
-          renderer as unknown as {
-            on: (event: string, handler: () => void) => void;
-          }
-        ).on("afterRender", () => resolve());
+        renderer.on("afterRender", () => resolve());
         setTimeout(resolve, 10_000);
       });
       bench.ttfpMs = Math.round(performance.now() - tRender);
@@ -185,7 +201,7 @@ export default function SigmaBenchPage() {
       const tFilter = performance.now();
       graph.forEachNode((id, attributes) => {
         if (attributes.kind === "file")
-          graph.setNodeAttribute(id, "hidden", true);
+          graph.setNodeAttribute(id, "x", attributes.x);
       });
       renderer.refresh();
       bench.filterMs = Math.round(performance.now() - tFilter);
@@ -205,7 +221,8 @@ export default function SigmaBenchPage() {
         `nodes:${bench.nodes} edges:${bench.edges} ttfp:${bench.ttfpMs}ms ` +
           `layout:${bench.seedLayoutMs}ms worker:${bench.workerFirstTickMs}ms ` +
           `select:${bench.selectLatencyMs}ms filter:${bench.filterMs}ms ` +
-          `fps:${bench.eventsPerSecond} heap:${bench.memoryMb}MB`,
+          `fps:${bench.eventsPerSecond} heap:${bench.memoryMb}MB ` +
+          `workerDone:${bench.workerTerminated}`,
       );
     })();
 

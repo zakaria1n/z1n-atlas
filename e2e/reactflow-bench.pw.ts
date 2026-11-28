@@ -1,43 +1,70 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { expect, test } from "@playwright/test";
 
 /**
- * React Flow renderer benchmark — measures the existing workspace graph
- * (production React Flow renderer) on the same OmniSport snapshot the
- * Sigma harness uses, with equivalent instrumentation.
+ * React Flow fallback benchmark — measures the WebGL-fallback renderer (the
+ * bounded React Flow subset) on the same pinned OmniSport snapshot the Sigma
+ * workspace benchmark uses, with equivalent instrumentation. Sigma.js is the
+ * production renderer for the repository-wide scopes; this is the disclosed
+ * no-WebGL path, kept measurable so fallback regressions are visible.
+ *
+ * Desktop-only: the fallback's DOM grid is identical across viewports and
+ * the mobile workspace is covered by the Sigma benchmark.
  */
-test.setTimeout(420_000);
-
-// Desktop-only: the mobile workspace renders the graph behind a tab
-// switch; the Sigma harness already covers the mobile viewport directly.
-test.skip(
-  test.info().project.name !== "desktop",
-  "React Flow mobile rendering is covered by the mobile workspace e2e.",
-);
-test("react flow: omnisport (desktop)", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/import");
-  await page
-    .getByLabel("GitHub repository URL")
-    .fill("https://github.com/yass91-cmd/omnisport-digitale");
-  await page.getByRole("button", { name: "Import repository" }).click();
-  const result = page.getByRole("status").filter({
-    hasText: /Repository read|Import|selected/,
+test.setTimeout(240_000);
+test("react flow fallback: omnisport (desktop)", async ({ page }, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "The fallback grid is viewport-independent; the Sigma benchmark covers mobile.",
+  );
+  const raw = await readFile(
+    path.join(__dirname, "../apps/web/bench/sigma/graphs/omnisport.json"),
+    "utf8",
+  );
+  // Force the no-WebGL path and seed the recorded snapshot into the real
+  // workspace (dev-only benchmark bootstrap).
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (
+      this: HTMLCanvasElement,
+      ...args: Parameters<typeof HTMLCanvasElement.prototype.getContext>
+    ) {
+      if (String(args[0]).startsWith("webgl")) return null;
+      return original.apply(this, args);
+    } as typeof HTMLCanvasElement.prototype.getContext;
   });
-  await expect(result).toBeVisible({ timeout: 180_000 });
-  await result.getByRole("link", { name: "Browse imported files" }).click();
-  await page.getByRole("button", { name: "Analyze project" }).click();
-  // TTFR: from clicking "Send and analyze" to the graph region rendering
-  // at least one visible React Flow node element.
+  await page.addInitScript(
+    ([graph, session]) => {
+      sessionStorage.setItem("z1n_bench_graph", graph as string);
+      sessionStorage.setItem("z1n_bench_session", session as string);
+    },
+    [
+      raw,
+      JSON.stringify({
+        label: "omnisport",
+        origin: "local",
+        files: [],
+        skipped: 0,
+        truncated: false,
+      }),
+    ],
+  );
   const t0 = Date.now();
-  await page.getByRole("button", { name: "Send and analyze" }).click();
+  await page.goto("/workspace");
+  const region = page.getByRole("region", {
+    name: "Source relationship graph",
+  });
+  await expect(region).toBeVisible({ timeout: 120_000 });
   await expect(
-    page.getByRole("region", { name: "Source relationship graph" }),
-  ).toBeVisible({ timeout: 180_000 });
+    page.getByText(
+      /WebGL is unavailable, so the graph renders as a bounded subset/,
+    ),
+  ).toBeVisible();
   await expect
     .poll(
       async () => {
-        const nodes = await page
-          .getByRole("region", { name: "Source relationship graph" })
+        const nodes = await region
           .locator("[data-id]")
           .count()
           .catch(() => 0);
@@ -48,16 +75,7 @@ test("react flow: omnisport (desktop)", async ({ page }) => {
     .toBe("rendered");
   const ttfrMs = Date.now() - t0;
 
-  // Pan/zoom: wheel events over the graph pane for ~2s while counting rAF.
-  const region = page.getByRole("region", {
-    name: "Source relationship graph",
-  });
-  await region.locator("[data-id]").first().waitFor({ timeout: 30_000 });
-  let frames = 0;
-  const count = () => {
-    frames += 1;
-    if (frames < 4000) requestAnimationFrame(count);
-  };
+  // Pan/zoom: wheel events over the graph pane while counting frames.
   await page.evaluate(() => {
     const counter = { frames: 0, running: true };
     const step = () => {
@@ -88,7 +106,6 @@ test("react flow: omnisport (desktop)", async ({ page }) => {
         ).__rfCounter ?? { frames: 0, running: true }
       ).frames / 2,
   );
-  void count;
 
   const memoryMb = await page.evaluate(() =>
     performance.memory
@@ -99,13 +116,9 @@ test("react flow: omnisport (desktop)", async ({ page }) => {
       : null,
   );
 
-  // Filtering performance: the workspace node-kind filter, if rendered.
   const nodeCount = await region.locator("[data-id]").count();
   const tFilter = Date.now();
-  const filterControl = page
-    .getByRole("region", { name: "Source relationship graph" })
-    .getByRole("combobox")
-    .first();
+  const filterControl = region.getByRole("combobox").last();
   if (await filterControl.isVisible().catch(() => false)) {
     await filterControl.selectOption({ index: 1 }).catch(() => {});
     await page.waitForTimeout(400);
@@ -113,7 +126,7 @@ test("react flow: omnisport (desktop)", async ({ page }) => {
   const filterMs = Date.now() - tFilter;
 
   console.log(
-    `REACTFLOW omnisport/desktop: ttfr:${ttfrMs}ms fps:${Math.round(fps)} filter:${filterMs}ms heap:${memoryMb}MB visibleNodes:${nodeCount}`,
+    `REACTFLOW-FALLBACK omnisport/desktop: ttfr:${ttfrMs}ms fps:${Math.round(fps)} filter:${filterMs}ms heap:${memoryMb}MB renderedNodes:${nodeCount}`,
   );
   test.info().annotations.push({
     type: "outcome",

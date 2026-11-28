@@ -44,7 +44,7 @@ for (const viewport of [
       expect(bench.ttfpMs).toBeGreaterThan(0);
       test.info().annotations.push({
         type: "outcome",
-        description: `ttfp:${bench.ttfpMs}ms layout:${bench.layoutMs}ms select:${bench.selectLatencyMs}ms filter:${bench.filterMs}ms fps:${bench.eventsPerSecond} heap:${bench.memoryMb}MB nodes:${bench.nodes} edges:${bench.edges}`,
+        description: `ttfp:${bench.ttfpMs}ms seed:${bench.seedLayoutMs}ms worker:${bench.workerFirstTickMs}ms done:${bench.workerTerminated} select:${bench.selectLatencyMs}ms filter:${bench.filterMs}ms fps:${bench.eventsPerSecond} heap:${bench.memoryMb}MB nodes:${bench.nodes} edges:${bench.edges}`,
       });
     });
   }
