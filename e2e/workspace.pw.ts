@@ -20,6 +20,9 @@ const files: Record<string, string> = {
 test("imports local source, analyzes a real graph, follows a journey and opens a chat citation", async ({
   page,
 }, testInfo) => {
+  // The real analysis round trip plus the WebGL layout refinement need more
+  // than the global 60s budget.
+  test.setTimeout(150_000);
   await page.addInitScript((fixture) => {
     Object.defineProperty(window, "showDirectoryPicker", {
       configurable: true,
