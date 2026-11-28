@@ -1,177 +1,86 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Background,
-  Controls,
-  MarkerType,
-  ReactFlow,
-  type Edge,
-  type Node,
-  type ReactFlowInstance,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import type { CodeGraph, GraphEdge, GraphNode, Journey } from "@z1n/contracts";
+import { useCallback, useMemo, useRef, useState } from "react";
+import type { CodeGraph, GraphEdge, Journey } from "@z1n/contracts";
 import type { RepositorySession } from "@/features/repository-import/repository-session";
 import { JourneyPanel } from "./journey-panel";
+import { GraphViewport, type GraphScope } from "./graph-viewport";
+import type { ViewportApi } from "./renderer/sigma-graph";
 
 type Props = {
   graph: CodeGraph;
   session: RepositorySession;
   onOpenFile: (path: string, line?: number) => void;
 };
-// Up to these sizes a graph stays readable with every edge labelled and the
-// whole relationship list available. Beyond them, labels and the list are
-// narrowed because a large selection would otherwise mount tens of thousands
-// of elements that no one can read.
-const LABELLED_EDGE_LIMIT = 400;
-const COMPACT_NODE_LIMIT = 150;
 const RELATIONSHIP_PAGE = 100;
-const isFile = (node: GraphNode) => !node.kind || node.kind === "file";
+// Mirrors the renderer's label threshold so the disclosure matches what the
+// React Flow modes actually draw; Sigma manages label density itself.
+const LABELLED_EDGE_LIMIT = 400;
 
 export function GraphCanvas({ graph, session, onOpenFile }: Props) {
-  const [mobile, setMobile] = useState(false);
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 700px)");
-    const update = () => setMobile(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
   const [filter, setFilter] = useState("all");
-  const [view, setView] = useState<"files" | "all" | "journey">("files");
-  const flow = useRef<ReactFlowInstance | null>(null);
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      void flow.current?.fitView({
-        padding: 0.15,
-        minZoom: 0.65,
-        maxZoom: 0.9,
-        duration: 0,
-      });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [view]);
+  const [scope, setScope] = useState<GraphScope>("files");
+  const viewportApi = useRef<ViewportApi | null>(null);
+  const [layoutRunning, setLayoutRunning] = useState(false);
   const [selected, setSelected] = useState<GraphEdge | null>(null);
   const [journey, setJourney] = useState<Journey | null>(null);
+  const [focus, setFocus] = useState<{ nodeId: string; nonce: number } | null>(
+    null,
+  );
   const [relationshipQuery, setRelationshipQuery] = useState("");
   const byId = useMemo(
     () => new Map(graph.nodes.map((node) => [node.id, node])),
     [graph],
   );
-  // Files in path order, each followed by the symbols declared in it, so that
-  // a file and its symbols are neighbours on the grid and their edges short.
-  const files = useMemo(() => graph.nodes.filter(isFile), [graph]);
-  const ordered = useMemo(() => {
-    const symbols = new Map<string, GraphNode[]>();
-    for (const node of graph.nodes)
-      if (!isFile(node)) {
-        const group = symbols.get(node.path);
-        if (group) group.push(node);
-        else symbols.set(node.path, [node]);
-      }
-    return files.flatMap((file) => [file, ...(symbols.get(file.path) ?? [])]);
-  }, [graph, files]);
-  const journeyNodes = useMemo(
-    () => new Set(journey?.nodeIds ?? []),
-    [journey],
+  const labelOf = useMemo(
+    () => (id: string) => byId.get(id)?.name ?? byId.get(id)?.path ?? id,
+    [byId],
   );
   const journeyEdges = useMemo(
     () => new Set(journey?.edgeIds ?? []),
     [journey],
   );
-  const visibleNodes = useMemo(
-    () =>
-      view === "files"
-        ? files
-        : view === "journey"
-          ? (journey?.nodeIds
-              .map((id) => byId.get(id))
-              .filter((node) => node !== undefined) ?? [])
-          : ordered,
-    [files, ordered, view, journey, byId],
-  );
-  const visible = useMemo(() => {
-    const ids = new Set(visibleNodes.map((node) => node.id));
+  const visibleEdges = useMemo(() => {
+    const isFile = (id: string) => {
+      const node = byId.get(id);
+      return !node?.kind || node.kind === "file";
+    };
     return graph.edges.filter(
       (edge) =>
-        ids.has(edge.source) &&
-        ids.has(edge.target) &&
-        (view !== "journey" || journeyEdges.has(edge.id)) &&
+        (scope !== "files" || (isFile(edge.source) && isFile(edge.target))) &&
+        (scope !== "journey" || journeyEdges.has(edge.id)) &&
         (filter === "all" || edge.kind === filter),
     );
-  }, [graph, filter, visibleNodes, view, journeyEdges]);
-  // A dense grid keeps large graphs from becoming an extremely tall column.
-  const columns =
-    visibleNodes.length <= COMPACT_NODE_LIMIT
-      ? mobile
-        ? 2
-        : 5
-      : Math.min(
-          80,
-          Math.max(5, Math.round(Math.sqrt(visibleNodes.length * 1.6))),
-        );
-  const labelled = visible.length <= LABELLED_EDGE_LIMIT;
-  const labelOf = useMemo(() => {
-    const label = (id: string) =>
-      byId.get(id)?.name ?? byId.get(id)?.path ?? id;
-    return label;
-  }, [byId]);
-  const nodes = useMemo<Node[]>(
-    () =>
-      visibleNodes.map((node, index) => ({
-        id: node.id,
-        position: {
-          x: (index % columns) * 230,
-          y: Math.floor(index / columns) * 130,
-        },
-        data: { label: node.name ? `${node.name} · ${node.path}` : node.path },
-        ariaLabel: `${node.kind ?? "file"}: ${node.name ?? node.path}`,
-        style: journeyNodes.has(node.id)
-          ? { border: "3px solid #c2410c", background: "#fff7ed" }
-          : undefined,
-      })),
-    [visibleNodes, columns, journeyNodes],
-  );
-  const edges = useMemo<Edge[]>(
-    () =>
-      visible.map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        label: labelled ? edge.kind : undefined,
-        ariaLabel: `${edge.kind} from ${labelOf(edge.source)} to ${labelOf(edge.target)}`,
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: {
-          stroke: journeyEdges.has(edge.id)
-            ? "#c2410c"
-            : edge.confidence === "heuristic"
-              ? "#b45309"
-              : "#2563eb",
-          strokeWidth: journeyEdges.has(edge.id) ? 4 : 1.5,
-          strokeDasharray: edge.confidence === "heuristic" ? "5 5" : undefined,
-        },
-      })),
-    [visible, labelled, journeyEdges, labelOf],
-  );
+  }, [graph, scope, journeyEdges, filter, byId]);
   const listed = useMemo(() => {
     const needle = relationshipQuery.trim().toLowerCase();
     const matches = needle
-      ? visible.filter((edge) =>
+      ? visibleEdges.filter((edge) =>
           `${labelOf(edge.source)} ${labelOf(edge.target)} ${edge.kind}`
             .toLowerCase()
             .includes(needle),
         )
-      : visible;
+      : visibleEdges;
     return {
       edges: matches.slice(0, RELATIONSHIP_PAGE),
       total: matches.length,
     };
-  }, [visible, relationshipQuery, labelOf]);
+  }, [visibleEdges, relationshipQuery, labelOf]);
   const proofs = selected
     ? [selected.evidenceId, ...(selected.supportingEvidenceIds ?? [])]
         .map((id) => graph.evidence.find((item) => item.id === id))
         .filter((item) => item !== undefined)
     : [];
+  // Selecting a relationship highlights its endpoints in the renderer and can
+  // be driven from the list (which also re-aims the camera), from an edge
+  // click or from keyboard focus.
+  const selectEdge = useCallback((edge: GraphEdge) => {
+    setSelected(edge);
+  }, []);
+  const selectEdgeFromList = useCallback((edge: GraphEdge) => {
+    setSelected(edge);
+    setFocus({ nodeId: edge.source, nonce: Date.now() });
+  }, []);
+  const clearSelection = useCallback(() => setSelected(null), []);
   return (
     <section
       className="graph-container"
@@ -196,14 +105,14 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           if (item) {
             event.preventDefault();
             event.stopPropagation();
-            setSelected(item);
+            selectEdge(item);
           }
         }
       }}
     >
       <div className="graph-info">
         <strong>Source relationships</strong>
-        <span>Solid: static or framework · dashed: heuristic</span>
+        <span>Blue: static or framework · amber: heuristic</span>
         <span>
           {graph.unresolved} unresolved imports or routes ·{" "}
           {graph.unresolvedCalls} unresolved calls
@@ -215,7 +124,7 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
               indexed files; coverage is partial.
             </span>
           )}
-        {!labelled && (
+        {visibleEdges.length > LABELLED_EDGE_LIMIT && (
           <span>
             Edge labels are hidden on this many relationships. Select an edge to
             see its type.
@@ -229,17 +138,17 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
             setJourney(value);
             if (value) {
               setFilter("all");
-              if (value.nodeIds.length) setView("journey");
-            } else if (view === "journey") setView("files");
+              if (value.nodeIds.length) setScope("journey");
+            } else if (scope === "journey") setScope("files");
           }}
           onOpenFile={onOpenFile}
         />
         <label htmlFor="graph-scope">Graph scope</label>
         <select
           id="graph-scope"
-          value={view}
+          value={scope}
           onChange={(event) => {
-            setView(event.target.value as "files" | "all" | "journey");
+            setScope(event.target.value as GraphScope);
           }}
         >
           <option value="files">Files</option>
@@ -268,7 +177,7 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           <p>{graph.notice}</p>
         </details>
         <details>
-          <summary>Inspect relationships ({visible.length})</summary>
+          <summary>Inspect relationships ({visibleEdges.length})</summary>
           <label className="relations-filter">
             Filter relationships
             <input
@@ -281,7 +190,7 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           <ul className="relations">
             {listed.edges.map((edge) => (
               <li key={edge.id}>
-                <button type="button" onClick={() => setSelected(edge)}>
+                <button type="button" onClick={() => selectEdgeFromList(edge)}>
                   {labelOf(edge.source)} → {labelOf(edge.target)} · {edge.kind}
                 </button>
               </li>
@@ -295,38 +204,25 @@ export function GraphCanvas({ graph, session, onOpenFile }: Props) {
           )}
         </details>
       </div>
-      <ReactFlow
-        onInit={(instance) => {
-          flow.current = instance;
-        }}
-        forceColorMode="light"
-        minZoom={visibleNodes.length <= COMPACT_NODE_LIMIT ? 0.65 : 0.05}
-        maxZoom={1.8}
-        fitViewOptions={{ minZoom: 0.65, maxZoom: 0.9, padding: 0.15 }}
-        nodes={nodes}
-        edges={edges}
-        deleteKeyCode={null}
-        ariaLabelConfig={{
-          "node.a11yDescription.default": "Press Enter to open source.",
-          "node.a11yDescription.keyboardDisabled":
-            "Select a node to open source.",
-          "edge.a11yDescription.default": "Press Enter to inspect evidence.",
-        }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        onlyRenderVisibleElements
-        onNodeClick={(_, node) => {
-          const item = byId.get(node.id);
-          if (item) onOpenFile(item.path, item.startLine);
-        }}
-        onEdgeClick={(_, edge) =>
-          setSelected(graph.edges.find((item) => item.id === edge.id) ?? null)
-        }
-        fitView
-      >
-        <Background />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+      {layoutRunning && (
+        <p className="graph-status" role="status">
+          Laying out the graph in the background; positions refine until the
+          layout converges.
+        </p>
+      )}
+      <GraphViewport
+        graph={graph}
+        scope={scope}
+        journey={journey}
+        edgeFilter={filter}
+        selectedEdgeId={selected?.id ?? null}
+        focus={focus}
+        apiRef={viewportApi}
+        onNodeSelect={(node) => onOpenFile(node.path, node.startLine)}
+        onEdgeSelect={selectEdge}
+        onStageSelect={clearSelection}
+        onLayoutRunning={setLayoutRunning}
+      />
       {selected && (
         <div
           className="graph-evidence"

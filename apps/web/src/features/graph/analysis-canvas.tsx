@@ -25,6 +25,28 @@ export function AnalysisCanvas({
   const dialog = useRef<HTMLDialogElement>(null);
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
+  // Dev-only renderer-benchmark hook: a seeded recorded graph drives the
+  // real workspace without a network analysis round trip. Production builds
+  // never take this branch.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const seeded = sessionStorage.getItem("z1n_bench_graph");
+    if (!seeded) return;
+    // Applied one frame after mount: keeps the effect free of synchronous
+    // state updates so the first server/client render stays identical.
+    const frame = requestAnimationFrame(() => {
+      try {
+        const recorded = JSON.parse(seeded) as CodeGraph;
+        setGraph(recorded);
+        setAnalysisId(recorded.analysisId);
+      } catch {
+        /* Ignore malformed seeds; the normal flow stays available. */
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+    // setAnalysisId is stable context state and not a real dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   async function analyze() {
     setError("");
     setBusy(true);
